@@ -27,6 +27,7 @@ import torchvision.models as tv_models
 from torch.utils.data import DataLoader, Dataset
 
 from cs6740.densenet import DenseNet121
+from cs6740.lstm import LSTM
 
 import os
 import sys
@@ -41,6 +42,7 @@ def main():
     parser.add_argument('--batchSz', type=int, default=64)
     parser.add_argument('--nEpochs', type=int, default=175)
     parser.add_argument('--preTrainedImgModel', type=str, default='densenet121')
+    parser.add_argument('--textModel', type=str, default='densenet121')
     parser.add_argument('--no-cuda', action='store_true')
     parser.add_argument('--dataRoot')
     parser.add_argument('--save')
