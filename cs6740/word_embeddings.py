@@ -11,7 +11,7 @@ from torchvision.datasets import CocoCaptions as Coco
 
 
 class WordEmbeddingUtil(object):
-    def __init__(self, embedding_file=".vector_cache/glove.6B.50d.txt", dimension=50):
+    def __init__(self, embedding_file=".vector_cache/glove.6B.50d.txt"):
         with open(embedding_file, 'r') as embed_file:
             embedding_lines = embed_file.readlines()
         embedding_data = [x.split() for x in embedding_lines]
@@ -24,7 +24,7 @@ class WordEmbeddingUtil(object):
         spacy_en = spacy.load('en')
         self.tokenizer = lambda x: [tok.text for tok in spacy_en.tokenizer(x)]
 
-        self.embedding_dimension = dimension
+        self.embedding_dimension = pretrained_weights.shape[1]
         print("Done creating embedding matrix")
 
     # Tokenizes a caption and returns a tensor containing its word embeddings
