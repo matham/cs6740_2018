@@ -27,6 +27,9 @@ import torchvision.models as tv_models
 from torch.utils.data import DataLoader, Dataset
 
 from cs6740.densenet import DenseNet121
+from cs6740.lstm import LSTM
+from cs6740.bow_encoder import BOWEncoder
+from cs6740.data_loaders import CocoDataset
 
 import os
 import sys
@@ -35,12 +38,27 @@ import math
 import shutil
 
 
+class FinalLayer(nn.Module):
+
+    img_net = None
+
+    txt_net = None
+
+    def __init__(self, img_net, txt_net):
+        self.img_net = img_net
+        self.txt_net = txt_net
+
+    def forward(self, x):
+        img, txt = x
+        return torch.dot(self.img_net(img), self.txt_net(txt))
+
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--batchSz', type=int, default=64)
     parser.add_argument('--nEpochs', type=int, default=175)
     parser.add_argument('--preTrainedImgModel', type=str, default='densenet121')
+    parser.add_argument('--textModel', type=str, default='bow')
     parser.add_argument('--no-cuda', action='store_true')
     parser.add_argument('--dataRoot')
     parser.add_argument('--save')
@@ -62,9 +80,12 @@ def main():
     os.makedirs(args.save, exist_ok=True)
 
     if args.preTrainedImgModel == 'densenet121':
-        net = DenseNet121(pretrained=True)
+        img_net = DenseNet121(pretrained=True)
     else:
         raise Exception('only densenet recognized')
+    if args.textModel == 'bow':
+        txt_net = BOWEncoder()
+    net = FinalLayer(img_net=img_net, txt_net=txt_net)
 
     print('  + Number of params: {}'.format(
         sum([p.data.nelement() for p in net.parameters()])))
@@ -105,15 +126,15 @@ def run(args, optimizer, net, trainTransform, valTransform, testTransform):
     data_root = args.dataRoot
     kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
 
-    train_set = dset.CocoCaptions(
+    train_set = CocoDataset(
         root=os.path.join(data_root, 'train2017'),
         annFile=os.path.join(data_root, 'captions_train2017.json'),
         transform=trainTransform)
-    val_set = dset.CocoCaptions(
+    val_set = CocoDataset(
         root=os.path.join(data_root, 'val2017'),
         annFile=os.path.join(data_root, 'captions_val2017.json'),
         transform=valTransform)
-    test_set = dset.CocoCaptions(
+    test_set = CocoDataset(
         root=os.path.join(data_root, 'test2017'),
         annFile=os.path.join(data_root, 'captions_test2017.json'),
         transform=testTransform)
@@ -155,7 +176,7 @@ def train(args, epoch, net, trainLoader, optimizer, trainF):
     nTrain = len(trainLoader.dataset)
     ts0 = time.perf_counter()
 
-    for batch_idx, (data, target) in enumerate(trainLoader):
+    for batch_idx, (data, (target_img, target_txt)) in enumerate(trainLoader):
         ts0_batch = time.perf_counter()
 
         if args.cuda:
