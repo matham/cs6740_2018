@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch
 
+
 class BOWEncoder(nn.Module):
     def __init__(self, layer_size, input_size, output_size):
         super(BOWEncoder, self).__init__()

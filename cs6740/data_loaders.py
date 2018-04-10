@@ -19,7 +19,7 @@ class CocoDataset(dset.CocoCaptions):
     def __getitem__(self, index):
         img, captions = super(CocoDataset, self).__getitem__(index)
         caption = captions[random.randint(0, len(captions) - 1)]
-        label = 1 if index < len(self.data_mapping) else 0
+        label = 1 if index < len(self.data_mapping) else -1
         return img, caption, label
 
     def __len__(self):

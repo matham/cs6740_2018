@@ -30,6 +30,7 @@ from cs6740.densenet import DenseNet121
 from cs6740.lstm import LSTM
 from cs6740.bow_encoder import BOWEncoder
 from cs6740.data_loaders import CocoDataset
+from cs6740.word_embeddings import WordEmbeddingUtil
 
 import os
 import sys
@@ -59,6 +60,8 @@ def main():
     parser.add_argument('--nEpochs', type=int, default=175)
     parser.add_argument('--preTrainedImgModel', type=str, default='densenet121')
     parser.add_argument('--textModel', type=str, default='bow')
+    parser.add_argument('--textEmbedding', type=str, default='glove')
+    parser.add_argument('--textEmbeddingSize', type=int, default=50)
     parser.add_argument('--no-cuda', action='store_true')
     parser.add_argument('--dataRoot')
     parser.add_argument('--save')
@@ -80,11 +83,19 @@ def main():
     os.makedirs(args.save, exist_ok=True)
 
     if args.preTrainedImgModel == 'densenet121':
-        img_net = DenseNet121(pretrained=True)
+        img_net = DenseNet121(pretrained=True, num_classes=100)
     else:
         raise Exception('only densenet recognized')
+
+    if args.textEmbedding == 'glove':
+        embedding = WordEmbeddingUtil(
+            embedding_file=os.path.join(
+                args.dataRoot, 'glove.6B',
+                'glove.6B.{}d.txt'.format(args.textEmbeddingSize)))
+
     if args.textModel == 'bow':
-        txt_net = BOWEncoder()
+        txt_net = BOWEncoder(1, args.textEmbeddingSize, 100)
+
     net = FinalLayer(img_net=img_net, txt_net=txt_net)
 
     print('  + Number of params: {}'.format(
@@ -119,25 +130,25 @@ def main():
         ])
 
     print(net)
-    run(args, optimizer, net, trainTransform, valTransform, testTransform)
+    run(args, optimizer, net, trainTransform, valTransform, testTransform, embedding)
 
 
-def run(args, optimizer, net, trainTransform, valTransform, testTransform):
+def run(args, optimizer, net, trainTransform, valTransform, testTransform, embedding):
     data_root = args.dataRoot
     kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
 
     train_set = CocoDataset(
-        root=os.path.join(data_root, 'train2017'),
-        annFile=os.path.join(data_root, 'captions_train2017.json'),
-        transform=trainTransform)
+        root=os.path.join(data_root, 'coco', 'train2017'),
+        annFile=os.path.join(data_root, 'coco', 'captions_train2017.json'),
+        transform=trainTransform, target_transform=embedding)
     val_set = CocoDataset(
-        root=os.path.join(data_root, 'val2017'),
-        annFile=os.path.join(data_root, 'captions_val2017.json'),
-        transform=valTransform)
+        root=os.path.join(data_root, 'coco', 'val2017'),
+        annFile=os.path.join(data_root, 'coco', 'captions_val2017.json'),
+        transform=valTransform, target_transform=embedding)
     test_set = CocoDataset(
-        root=os.path.join(data_root, 'test2017'),
-        annFile=os.path.join(data_root, 'captions_test2017.json'),
-        transform=testTransform)
+        root=os.path.join(data_root, 'coco', 'test2017'),
+        annFile=os.path.join(data_root, 'coco', 'captions_test2017.json'),
+        transform=testTransform, target_transform=embedding)
 
     trainLoader = DataLoader(
         train_set, batch_size=args.batchSz, shuffle=True, **kwargs)
@@ -176,25 +187,25 @@ def train(args, epoch, net, trainLoader, optimizer, trainF):
     nTrain = len(trainLoader.dataset)
     ts0 = time.perf_counter()
 
-    for batch_idx, (data, (target_img, target_txt)) in enumerate(trainLoader):
+    for batch_idx, (img, caption, labels) in enumerate(trainLoader):
         ts0_batch = time.perf_counter()
 
         if args.cuda:
-            data, target = data.cuda(), target.cuda()
-        data, target = Variable(data), Variable(target)
+            img, caption, labels = img.cuda(), caption.cuda(), labels.cuda()
+        img, caption, labels = Variable(img, volatile=True), Variable(caption, volatile=True), Variable(labels)
 
         optimizer.zero_grad()
-        output = net(data)
-        loss = F.nll_loss(output, target)
+        output = net((img, caption))
+        loss = F.HingeEmbeddingLoss(output, labels)
 
-        pred = output.data.max(1)[1] # get the index of the max log-probability
-        incorrect = pred.ne(target.data).cpu().sum()
-        err = 100.*incorrect/len(data)
+        #pred = output.data.max(1)[1] # get the index of the max log-probability
+        #incorrect = pred.ne(target.data).cpu().sum()
+        err = 0 #100.*incorrect/len(data)
 
         del output
         loss.backward()
         optimizer.step()
-        nProcessed += len(data)
+        nProcessed += len(labels)
 
         partialEpoch = epoch + batch_idx / len(trainLoader) - 1
         te = time.perf_counter()
@@ -212,15 +223,15 @@ def val(args, epoch, net, valLoader, optimizer, testF):
     incorrect = 0
 
     ts0 = time.perf_counter()
-    for data, target in valLoader:
+    for data, (img, caption, labels) in valLoader:
         if args.cuda:
-            data, target = data.cuda(), target.cuda()
-        data, target = Variable(data, volatile=True), Variable(target)
+            img, caption, labels = img.cuda(), caption.cuda(), labels.cuda()
+        img, caption, labels = Variable(img, volatile=True), Variable(caption, volatile=True), Variable(labels)
 
-        output = net(data)
-        test_loss += F.nll_loss(output, target).data[0]
-        pred = output.data.max(1)[1] # get the index of the max log-probability
-        incorrect += pred.ne(target.data).cpu().sum()
+        output = net((img, caption))
+        test_loss += F.HingeEmbeddingLoss(output, labels).data[0]
+        #pred = output.data.max(1)[1] # get the index of the max log-probability
+        #incorrect += pred.ne(target.data).cpu().sum()
 
     test_loss = test_loss
     test_loss /= len(valLoader) # loss function already averages over batch size

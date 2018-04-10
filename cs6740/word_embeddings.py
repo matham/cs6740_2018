@@ -11,7 +11,7 @@ from torchvision.datasets import CocoCaptions as Coco
 
 
 class WordEmbeddingUtil(object):
-    def __init__(self, embedding_file=".vector_cache/glove.6B.50d.txt"):
+    def __init__(self, embedding_file="/home/matte/cs6740/data/glove.6B//glove.6B.50d.txt"):
         with open(embedding_file, 'r') as embed_file:
             embedding_lines = embed_file.readlines()
         embedding_data = [x.split() for x in embedding_lines]
@@ -41,8 +41,11 @@ class WordEmbeddingUtil(object):
         indices = Variable(torch.LongTensor(indices))
         return self.embed(indices)
 
+    def __call__(self, caption):
+        return self.get_embeddings(caption)
+
 
 
 if __name__ == "__main__":
     embed_util = WordEmbeddingUtil()
-    print(embed_util.get_embeddings(["see jane run"]))
+    print(embed_util.get_embeddings("see jane run").shape)
