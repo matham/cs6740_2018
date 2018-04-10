@@ -1,18 +1,10 @@
 #!/usr/bin/env python3
 
-from functools import partial
 import argparse
-from PIL import Image
 import torch
-import copy
 import numpy as np
 import random
 import time
-from random import shuffle
-import shutil
-from collections import defaultdict
-import os
-from functools import partial
 
 import torch.nn as nn
 import torch.optim as optim
@@ -20,11 +12,9 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-import torchvision.datasets as dset
 import torchvision.transforms as transforms
-import torchvision.models as tv_models
 
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 
 from cs6740.densenet import DenseNet121
 from cs6740.lstm import LSTM
@@ -41,17 +31,16 @@ import shutil
 
 class FinalLayer(nn.Module):
 
-    img_net = None
-
-    txt_net = None
-
-    def __init__(self, img_net, txt_net):
+    def __init__(self, img_net, txt_net, text_embedding, **kwargs):
+        super(FinalLayer, self).__init__(**kwargs)
         self.img_net = img_net
         self.txt_net = txt_net
+        self.text_embedding = text_embedding.embed
 
     def forward(self, x):
         img, txt = x
-        return torch.dot(self.img_net(img), self.txt_net(txt))
+        img, txt = self.img_net(img), self.txt_net(self.text_embedding(txt))
+        return torch.bmm(img.view(img.shape[0], 1, img.shape[1]), txt.view(txt.shape[0], txt.shape[1], 1))
 
 
 def main():
@@ -83,7 +72,9 @@ def main():
     os.makedirs(args.save, exist_ok=True)
 
     if args.preTrainedImgModel == 'densenet121':
-        img_net = DenseNet121(pretrained=True, num_classes=100)
+        img_net = DenseNet121(pretrained=True, num_output_features=100)
+        for param in img_net.features.parameters():
+            param.requires_grad = False
     else:
         raise Exception('only densenet recognized')
 
@@ -96,7 +87,7 @@ def main():
     if args.textModel == 'bow':
         txt_net = BOWEncoder(1, args.textEmbeddingSize, 100)
 
-    net = FinalLayer(img_net=img_net, txt_net=txt_net)
+    net = FinalLayer(img_net=img_net, txt_net=txt_net, text_embedding=embedding)
 
     print('  + Number of params: {}'.format(
         sum([p.data.nelement() for p in net.parameters()])))
@@ -104,32 +95,29 @@ def main():
         net = net.cuda()
 
     if args.opt == 'sgd':
-        optimizer = optim.SGD(net.parameters(), lr=1e-1,
+        optimizer = optim.SGD(filter(lambda p: p.requires_grad, net.parameters()), lr=1e-1,
                             momentum=0.9, weight_decay=1e-4)
     elif args.opt == 'adam':
-        optimizer = optim.Adam(net.parameters(), weight_decay=1e-4)
+        optimizer = optim.Adam(filter(lambda p: p.requires_grad, net.parameters()), weight_decay=1e-4)
     elif args.opt == 'rmsprop':
-        optimizer = optim.RMSprop(net.parameters(), weight_decay=1e-4)
+        optimizer = optim.RMSprop(filter(lambda p: p.requires_grad, net.parameters()), weight_decay=1e-4)
 
-    if True:
-        testTransform = valTransform = trainTransform = None
-    else:
-        trainTransform = transforms.Compose([
-            transforms.RandomSizedCrop(224),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225]),
-        ])
+    trainTransform = transforms.Compose([
+        transforms.RandomSizedCrop(224),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        #transforms.Normalize(mean=[0.485, 0.456, 0.406],
+        #                     std=[0.229, 0.224, 0.225]),
+    ])
 
-        testTransform = transforms.Compose([
-            transforms.RandomSizedCrop(224),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225]),
-        ])
+    valTransform = testTransform = transforms.Compose([
+        transforms.RandomSizedCrop(224),
+        transforms.ToTensor(),
+        #transforms.Normalize(mean=[0.485, 0.456, 0.406],
+        #                     std=[0.229, 0.224, 0.225]),
+    ])
 
-    print(net)
+    #print(net)
     run(args, optimizer, net, trainTransform, valTransform, testTransform, embedding)
 
 
@@ -137,25 +125,20 @@ def run(args, optimizer, net, trainTransform, valTransform, testTransform, embed
     data_root = args.dataRoot
     kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
 
+    rand_caption = lambda captions: embedding(captions[random.randint(0, len(captions) - 1)])
     train_set = CocoDataset(
         root=os.path.join(data_root, 'coco', 'train2017'),
         annFile=os.path.join(data_root, 'coco', 'captions_train2017.json'),
-        transform=trainTransform, target_transform=embedding)
+        transform=trainTransform, target_transform=rand_caption)
     val_set = CocoDataset(
         root=os.path.join(data_root, 'coco', 'val2017'),
         annFile=os.path.join(data_root, 'coco', 'captions_val2017.json'),
-        transform=valTransform, target_transform=embedding)
-    test_set = CocoDataset(
-        root=os.path.join(data_root, 'coco', 'test2017'),
-        annFile=os.path.join(data_root, 'coco', 'captions_test2017.json'),
-        transform=testTransform, target_transform=embedding)
+        transform=valTransform, target_transform=rand_caption)
 
     trainLoader = DataLoader(
         train_set, batch_size=args.batchSz, shuffle=True, **kwargs)
     valLoader = DataLoader(
         val_set, batch_size=args.batchSz, shuffle=False, **kwargs)
-    testLoader = DataLoader(
-        test_set, batch_size=args.batchSz, shuffle=False, **kwargs)
 
     trainF = open(os.path.join(args.save, 'train.csv'), 'w')
     valF = open(os.path.join(args.save, 'val.csv'), 'w')
@@ -189,14 +172,18 @@ def train(args, epoch, net, trainLoader, optimizer, trainF):
 
     for batch_idx, (img, caption, labels) in enumerate(trainLoader):
         ts0_batch = time.perf_counter()
+        labels = torch.FloatTensor(labels / 1.)
 
         if args.cuda:
             img, caption, labels = img.cuda(), caption.cuda(), labels.cuda()
         img, caption, labels = Variable(img, volatile=True), Variable(caption, volatile=True), Variable(labels)
 
         optimizer.zero_grad()
-        output = net((img, caption))
-        loss = F.HingeEmbeddingLoss(output, labels)
+        output = torch.squeeze(net((img, caption)))
+        print(output.shape, labels.shape)
+        print(labels)
+        print(output)
+        loss = F.mse_loss(output, labels)
 
         #pred = output.data.max(1)[1] # get the index of the max log-probability
         #incorrect = pred.ne(target.data).cpu().sum()
