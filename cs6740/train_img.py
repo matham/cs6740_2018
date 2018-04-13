@@ -36,10 +36,16 @@ class FinalLayer(nn.Module):
         self.img_net = img_net
         self.txt_net = txt_net
         self.text_embedding = text_embedding.embed
+        for param in self.text_embedding.parameters():
+            param.requires_grad = False
 
     def forward(self, x):
         img, txt = x
-        img, txt = self.img_net(img), self.txt_net(self.text_embedding(txt))
+        img = self.img_net(img)
+        txt = self.text_embedding(txt)
+        if self.txt_net is not None:
+            txt = self.txt_net(txt)
+        return torch.squeeze(img), torch.squeeze(txt)
         return torch.bmm(img.view(img.shape[0], 1, img.shape[1]), txt.view(txt.shape[0], txt.shape[1], 1))
 
 
@@ -72,7 +78,7 @@ def main():
     os.makedirs(args.save, exist_ok=True)
 
     if args.preTrainedImgModel == 'densenet121':
-        img_net = DenseNet121(pretrained=True, num_output_features=100)
+        img_net = DenseNet121(pretrained=True, num_output_features=1000)
         for param in img_net.features.parameters():
             param.requires_grad = False
     else:
@@ -85,7 +91,7 @@ def main():
                 'glove.6B.{}d.txt'.format(args.textEmbeddingSize)))
 
     if args.textModel == 'bow':
-        txt_net = BOWEncoder(1, args.textEmbeddingSize, 100)
+        txt_net = BOWEncoder(1, args.textEmbeddingSize, 1000)
 
     net = FinalLayer(img_net=img_net, txt_net=txt_net, text_embedding=embedding)
 
@@ -103,7 +109,7 @@ def main():
         optimizer = optim.RMSprop(filter(lambda p: p.requires_grad, net.parameters()), weight_decay=1e-4)
 
     trainTransform = transforms.Compose([
-        transforms.RandomSizedCrop(224),
+        transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         #transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -111,7 +117,7 @@ def main():
     ])
 
     valTransform = testTransform = transforms.Compose([
-        transforms.RandomSizedCrop(224),
+        transforms.RandomResizedCrop(224),
         transforms.ToTensor(),
         #transforms.Normalize(mean=[0.485, 0.456, 0.406],
         #                     std=[0.229, 0.224, 0.225]),
@@ -172,18 +178,17 @@ def train(args, epoch, net, trainLoader, optimizer, trainF):
 
     for batch_idx, (img, caption, labels) in enumerate(trainLoader):
         ts0_batch = time.perf_counter()
-        labels = torch.FloatTensor(labels / 1.)
+        labels = labels.float()
 
         if args.cuda:
             img, caption, labels = img.cuda(), caption.cuda(), labels.cuda()
-        img, caption, labels = Variable(img, volatile=True), Variable(caption, volatile=True), Variable(labels)
+        img, caption, labels = Variable(img), Variable(caption), Variable(labels)
 
         optimizer.zero_grad()
-        output = torch.squeeze(net((img, caption)))
-        print(output.shape, labels.shape)
-        print(labels)
-        print(output)
-        loss = F.mse_loss(output, labels)
+        output = net((img, caption))
+        #print(output.shape, labels.shape)
+        #print(list(zip(labels.data.cpu().tolist(), output.data.cpu().tolist())))
+        loss = F.cosine_embedding_loss(*output, labels)
 
         #pred = output.data.max(1)[1] # get the index of the max log-probability
         #incorrect = pred.ne(target.data).cpu().sum()
@@ -216,7 +221,7 @@ def val(args, epoch, net, valLoader, optimizer, testF):
         img, caption, labels = Variable(img, volatile=True), Variable(caption, volatile=True), Variable(labels)
 
         output = net((img, caption))
-        test_loss += F.HingeEmbeddingLoss(output, labels).data[0]
+        test_loss += F.cosine_embedding_loss(*output, labels).data[0]
         #pred = output.data.max(1)[1] # get the index of the max log-probability
         #incorrect += pred.ne(target.data).cpu().sum()
 
