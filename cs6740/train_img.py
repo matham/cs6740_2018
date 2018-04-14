@@ -46,7 +46,6 @@ class FinalLayer(nn.Module):
         if self.txt_net is not None:
             txt = self.txt_net(txt)
         return torch.squeeze(img), torch.squeeze(txt)
-        return torch.bmm(img.view(img.shape[0], 1, img.shape[1]), txt.view(txt.shape[0], txt.shape[1], 1))
 
 
 def main():
@@ -130,6 +129,7 @@ def main():
 def run(args, optimizer, net, trainTransform, valTransform, testTransform, embedding):
     data_root = args.dataRoot
     kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
+    ranks = [1, 3, 5, 10, 100000]
 
     rand_caption = lambda captions: embedding(captions[random.randint(0, len(captions) - 1)])
     train_set = CocoDataset(
@@ -153,8 +153,8 @@ def run(args, optimizer, net, trainTransform, valTransform, testTransform, embed
     ts0 = time.perf_counter()
     for epoch in range(1, args.nEpochs + 1):
         adjust_opt(args.opt, optimizer, epoch)
-        train(args, epoch, net, trainLoader, optimizer, trainF)
-        err = val(args, epoch, net, valLoader, optimizer, valF)
+        train(args, epoch, net, trainLoader, optimizer, trainF, ranks)
+        err = val(args, epoch, net, valLoader, optimizer, valF, ranks)
 
         torch.save(optimizer.state_dict(), os.path.join(args.save, 'optimizer_last_epoch.t7'))
         torch.save(net.state_dict(), os.path.join(args.save, 'model_last_epoch.t7'))
@@ -169,7 +169,23 @@ def run(args, optimizer, net, trainTransform, valTransform, testTransform, embed
     print('Done in {:.2f}s'.format(time.perf_counter() - ts0))
 
 
-def train(args, epoch, net, trainLoader, optimizer, trainF):
+def compute_ranking(texts, images, labels, ranks=[1]):
+    texts, images, labels = texts.cpu().data, images.cpu().data, labels.cpu().data
+
+    batch_match = torch.arange(texts.shape[0]).long()[labels == 1]
+    texts = texts.index_select(0, batch_match)
+    images = images.index_select(0, batch_match)
+    similarity = torch.mm(texts, images.transpose(1, 0))
+    sort_val, sort_key = torch.sort(similarity, dim=1, descending=True)
+    n = texts.shape[0]
+    labels = torch.arange(n).long().expand(n, n).transpose(1, 0)
+    matched = labels == sort_key
+
+    accuracy = [matched[:, :rank].sum() / n * 100 for rank in ranks]
+    return accuracy
+
+
+def train(args, epoch, net, trainLoader, optimizer, trainF, ranks):
     net.train()
 
     nProcessed = 0
@@ -186,8 +202,7 @@ def train(args, epoch, net, trainLoader, optimizer, trainF):
 
         optimizer.zero_grad()
         output = net((img, caption))
-        #print(output.shape, labels.shape)
-        #print(list(zip(labels.data.cpu().tolist(), output.data.cpu().tolist())))
+        rankings = compute_ranking(*output[::-1], labels, ranks)
         loss = F.cosine_embedding_loss(*output, labels)
 
         #pred = output.data.max(1)[1] # get the index of the max log-probability
@@ -201,26 +216,35 @@ def train(args, epoch, net, trainLoader, optimizer, trainF):
 
         partialEpoch = epoch + batch_idx / len(trainLoader) - 1
         te = time.perf_counter()
-        print('Train Epoch: {:.2f} [{}/{} ({:.0f}%)]\tTime: [{:.2f}s/{:.2f}s]\tLoss: {:.6f}'.format(
+        s = 'Train Epoch: {:.2f} [{}/{} ({:.0f}%)]\tTime: [{:.2f}s/{:.2f}s]\tLoss: {:.6f}'.format(
             partialEpoch, nProcessed, nTrain, 100. * batch_idx / len(trainLoader),
-            te - ts0_batch, te - ts0, loss.data[0], err))
+            te - ts0_batch, te - ts0, loss.data[0], err)
+        s_rank = '\t'.join((['{:.2f}', ] * len(rankings))).format(*rankings)
+        print(s + '\tRanks: ' + s_rank)
 
-        trainF.write('{},{},{}\n'.format(partialEpoch, loss.data[0], err))
+        trainF.write('{},{},{},{}\n'.format(
+            partialEpoch, loss.data[0], err,
+            ','.join((['{}', ] * len(rankings))).format(*rankings)))
         trainF.flush()
 
 
-def val(args, epoch, net, valLoader, optimizer, testF):
+def val(args, epoch, net, valLoader, optimizer, testF, ranks):
     net.eval()
     test_loss = 0
     incorrect = 0
+    rank_values = [0, ] * len(ranks)
 
     ts0 = time.perf_counter()
-    for data, (img, caption, labels) in valLoader:
+    for batch_idx, (img, caption, labels) in enumerate(valLoader):
+        labels = labels.float()
         if args.cuda:
             img, caption, labels = img.cuda(), caption.cuda(), labels.cuda()
-        img, caption, labels = Variable(img, volatile=True), Variable(caption, volatile=True), Variable(labels)
+        img, caption, labels = Variable(img), Variable(caption), Variable(labels)
 
         output = net((img, caption))
+        rankings = compute_ranking(*output[::-1], labels, ranks)
+        for i, value in enumerate(rankings):
+            rank_values[i] += value
         test_loss += F.cosine_embedding_loss(*output, labels).data[0]
         #pred = output.data.max(1)[1] # get the index of the max log-probability
         #incorrect += pred.ne(target.data).cpu().sum()
@@ -229,10 +253,16 @@ def val(args, epoch, net, valLoader, optimizer, testF):
     test_loss /= len(valLoader) # loss function already averages over batch size
     nTotal = len(valLoader.dataset)
     err = 100.*incorrect/nTotal
-    print('\nTest set: Time: {:.2f}s, Average loss: {:.4f}, Error: {}/{} ({:.0f}%)\n'.format(
-        time.perf_counter() - ts0, test_loss, incorrect, nTotal, err))
+    s = '\nTest set: Time: {:.2f}s\tAverage loss: {:.4f}\tError: {}/{} ({:.0f}%)'.format(
+        time.perf_counter() - ts0, test_loss, incorrect, nTotal, err)
 
-    testF.write('{},{},{}\n'.format(epoch, test_loss, err))
+    rankings = [r / len(valLoader) for r in rankings]
+    s_rank = '\t'.join((['{:.2f}', ] * len(rankings))).format(*rankings)
+    print(s + '\tRanks: ' + s_rank + '\n')
+
+    testF.write('{},{},{},{}\n'.format(
+        epoch, test_loss, err,
+        ','.join((['{}', ] * len(rankings))).format(*rankings)))
     testF.flush()
     return err
 
