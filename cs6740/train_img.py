@@ -17,7 +17,7 @@ import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 
 from cs6740.densenet import DenseNet121
-from cs6740.lstm import LSTM
+from cs6740.lstm import CocoLSTM
 from cs6740.bow_encoder import BOWEncoder
 from cs6740.data_loaders import CocoDataset
 from cs6740.word_embeddings import WordEmbeddingUtil
@@ -93,6 +93,8 @@ def main():
 
     if args.textModel == 'bow':
         txt_net = BOWEncoder(1, args.textEmbeddingSize, 1000)
+    elif args.textModel == 'lstm':
+        txt_net = CocoLSTM(args.textEmbeddingSize, 1000)
 
     net = FinalLayer(img_net=img_net, txt_net=txt_net, text_embedding=embedding)
 
@@ -135,6 +137,7 @@ def run(args, optimizer, net, trainTransform, valTransform, testTransform, embed
 
     rand_caption = lambda captions: embedding(captions[random.randint(0, len(captions) - 1)])
     subset = args.valSubset or None
+    train_subset = None
     if subset:
         with open(subset, 'r') as fh:
             subset = list(map(int, fh.read().split(',')))
