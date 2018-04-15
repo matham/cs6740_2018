@@ -7,18 +7,22 @@ import spacy
 
 from torchvision.datasets import CocoCaptions as Coco
 
-# coco_dataset = Coco(root="../val2017", annFile="../annotations/captions_val2017.json")
-
 
 class WordEmbeddingUtil(object):
-    def __init__(self, padding=102, embedding_file="/home/matte/cs6740/data/glove.6B//glove.6B.50d.txt"):
+    def __init__(self, padding=102, embedding_file="data/glove.6B/glove.6B.50d.txt"):
         self.padding = padding
+        self.vocab = []
         with open(embedding_file, 'r') as embed_file:
-            embedding_lines = embed_file.readlines()
-        embedding_data = [x.split() for x in embedding_lines]
-        self.word_to_index = {w[0]:i for i, w in enumerate(embedding_data)}
-        embedding_data += [embedding_data[0]]
-        pretrained_weights = np.array([list(map(float, embed[1:])) for embed in embedding_data])
+            for line in embed_file:
+                embed = line.split()
+                self.vocab.append(embed[0])
+                self.embedding_dimension = len(embed) - 1
+
+        print(self.embedding_dimension)
+        self.word_to_index = {w:i for i, w in enumerate(self.vocab)}
+        # pretrained_weights = np.loadtxt(embedding_file, usecols=range(1, self.embedding_dimension+1), delimiter=' ', comments=None)
+        pretrained_weights = np.array([list(map(float, embed.split()[1:])) for embed in open(embedding_file, 'r').readlines()])
+        print(pretrained_weights.shape)
 
         self.embed = nn.Embedding(*pretrained_weights.shape, padding_idx=len(self.word_to_index))
         self.embed.weight.data.copy_(torch.from_numpy(pretrained_weights))
