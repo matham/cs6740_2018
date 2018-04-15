@@ -131,7 +131,7 @@ def main():
     ])
 
     #print(net)
-    tboard_writer = SummaryWriter()
+    tboard_writer = SummaryWriter(log_dir=args.save)
 
     run(args, optimizer, net, trainTransform, valTransform, testTransform, embedding, tboard_writer)
 
