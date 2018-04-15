@@ -18,10 +18,10 @@ class WordEmbeddingUtil(object):
                 self.vocab.append(embed[0])
                 self.embedding_dimension = len(embed) - 1
 
-        print(self.embedding_dimension)
         self.word_to_index = {w:i for i, w in enumerate(self.vocab)}
         # pretrained_weights = np.loadtxt(embedding_file, usecols=range(1, self.embedding_dimension+1), delimiter=' ', comments=None)
         pretrained_weights = np.array([list(map(float, embed.split()[1:])) for embed in open(embedding_file, 'r').readlines()])
+        pretrained_weights = np.append(pretrained_weights, np.zeros([1, self.embedding_dimension]), axis=0)
         print(pretrained_weights.shape)
 
         self.embed = nn.Embedding(*pretrained_weights.shape, padding_idx=len(self.word_to_index))
