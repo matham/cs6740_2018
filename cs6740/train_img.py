@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 
-import argparse
-import torch
-import numpy as np
-import random
-import time
+from PyQt5 import QtCore, QtGui, QtWidgets
 
+import torch
 import torch.nn as nn
 import torch.optim as optim
 
 import torch.nn.functional as F
 from torch.autograd import Variable
 
+from tensorboardX import SummaryWriter
+
 import torchvision.transforms as transforms
 
 from torch.utils.data import DataLoader
+import argparse
+import numpy as np
+import random
+import time
+
 
 from cs6740.densenet import DenseNet121
 from cs6740.lstm import LSTM
@@ -125,10 +129,12 @@ def main():
     ])
 
     #print(net)
-    run(args, optimizer, net, trainTransform, valTransform, testTransform, embedding)
+    tboard_writer = SummaryWriter()
+
+    run(args, optimizer, net, trainTransform, valTransform, testTransform, embedding, tboard_writer)
 
 
-def run(args, optimizer, net, trainTransform, valTransform, testTransform, embedding):
+def run(args, optimizer, net, trainTransform, valTransform, testTransform, embedding, tboard_writer):
     data_root = args.dataRoot
     kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
     ranks = [1, 3, 5, 10, 100000]
@@ -162,8 +168,8 @@ def run(args, optimizer, net, trainTransform, valTransform, testTransform, embed
     ts0 = time.perf_counter()
     for epoch in range(1, args.nEpochs + 1):
         adjust_opt(args.opt, optimizer, epoch)
-        train(args, epoch, net, trainLoader, optimizer, trainF, ranks)
-        err = val(args, epoch, net, valLoader, optimizer, valF, ranks)
+        train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer)
+        err = val(args, epoch, net, valLoader, optimizer, valF, ranks, tboard_writer)
 
         torch.save(optimizer.state_dict(), os.path.join(args.save, 'optimizer_last_epoch.t7'))
         torch.save(net.state_dict(), os.path.join(args.save, 'model_last_epoch.t7'))
@@ -197,7 +203,7 @@ def compute_ranking(texts, images, labels, ranks=[1]):
     return accuracy, n
 
 
-def train(args, epoch, net, trainLoader, optimizer, trainF, ranks):
+def train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer):
     net.train()
 
     nProcessed = 0
@@ -239,8 +245,13 @@ def train(args, epoch, net, trainLoader, optimizer, trainF, ranks):
             ','.join((['{}', ] * len(rankings))).format(*rankings)))
         trainF.flush()
 
+        tboard_writer.add_scalar('train/loss', loss.data[0], partialEpoch*4)
+        for rank, n in zip(rankings, ranks):
+            tboard_writer.add_scalar('train/Percent Accuracy (top {})'.format(n), rank, partialEpoch*4)
 
-def val(args, epoch, net, valLoader, optimizer, testF, ranks):
+
+
+def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
     net.eval()
     test_loss = 0
     incorrect = 0
@@ -279,6 +290,11 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks):
         epoch, test_loss, err,
         ','.join((['{}', ] * len(rankings))).format(*rankings)))
     testF.flush()
+
+    tboard_writer.add_scalar('val/loss', test_loss, epoch)
+    for rank, n in zip(rankings, ranks):
+        tboard_writer.add_scalar('val/Percent Accuracy (top {})'.format(n), rank, epoch)
+
     return err
 
 
