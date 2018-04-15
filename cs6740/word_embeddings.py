@@ -11,16 +11,23 @@ from torchvision.datasets import CocoCaptions as Coco
 class WordEmbeddingUtil(object):
     def __init__(self, padding=102, embedding_file="data/glove.6B/glove.6B.50d.txt"):
         self.padding = padding
-        self.vocab = []
-        with open(embedding_file, 'r') as embed_file:
-            for line in embed_file:
-                embed = line.split()
-                self.vocab.append(embed[0])
-                self.embedding_dimension = len(embed) - 1
+        try:
+            with open(embedding_file[:-3] + 'npz', 'rb') as embed_file:
+                npzfile = np.load(embed_file)
+                pretrained_weights, vocab = [npzfile[f] for f in npzfile.files]
+            self.word_to_index = {w: i for i, w in enumerate(vocab)}
+        except OSError:
+            vocab = []
+            with open(embedding_file, 'r') as embed_file:
+                for line in embed_file:
+                    embed = line.split()
+                    vocab.append(embed[0])
+                    self.embedding_dimension = len(embed) - 1
 
-        self.word_to_index = {w:i for i, w in enumerate(self.vocab)}
-        pretrained_weights = np.loadtxt(embedding_file, usecols=range(1, self.embedding_dimension+1), delimiter=' ', comments=None)
-        pretrained_weights = np.append(pretrained_weights, np.zeros([1, self.embedding_dimension]), axis=0)
+            self.word_to_index = {w: i for i, w in enumerate(vocab)}
+            pretrained_weights = np.loadtxt(embedding_file, usecols=range(1, self.embedding_dimension+1), delimiter=' ', comments=None)
+            pretrained_weights = np.append(pretrained_weights, np.zeros([1, self.embedding_dimension]), axis=0)
+            np.savez(embedding_file[:-3] + 'npz', pretrained_weights, vocab)
 
         self.embed = nn.Embedding(*pretrained_weights.shape, padding_idx=len(self.word_to_index))
         self.embed.weight.data.copy_(torch.from_numpy(pretrained_weights))
