@@ -56,6 +56,7 @@ def main():
     parser.add_argument('--textModel', type=str, default='bow')
     parser.add_argument('--textEmbedding', type=str, default='glove')
     parser.add_argument('--textEmbeddingSize', type=int, default=50)
+    parser.add_argument('--valSubset', type=str, default='')
     parser.add_argument('--no-cuda', action='store_true')
     parser.add_argument('--dataRoot')
     parser.add_argument('--save')
@@ -132,6 +133,11 @@ def run(args, optimizer, net, trainTransform, valTransform, testTransform, embed
     ranks = [1, 3, 5, 10, 100000]
 
     rand_caption = lambda captions: embedding(captions[random.randint(0, len(captions) - 1)])
+    subset = args.valSubset or None
+    if subset:
+        with open(subset, 'r') as fh:
+            subset = list(map(int, fh.read().split(',')))
+
     train_set = CocoDataset(
         root=os.path.join(data_root, 'coco', 'train2017'),
         annFile=os.path.join(data_root, 'coco', 'captions_train2017.json'),
@@ -139,7 +145,7 @@ def run(args, optimizer, net, trainTransform, valTransform, testTransform, embed
     val_set = CocoDataset(
         root=os.path.join(data_root, 'coco', 'val2017'),
         annFile=os.path.join(data_root, 'coco', 'captions_val2017.json'),
-        transform=valTransform, target_transform=rand_caption)
+        transform=valTransform, target_transform=rand_caption, subset=subset)
 
     trainLoader = DataLoader(
         train_set, batch_size=args.batchSz, shuffle=True, **kwargs)
@@ -173,16 +179,19 @@ def compute_ranking(texts, images, labels, ranks=[1]):
     texts, images, labels = texts.cpu().data, images.cpu().data, labels.cpu().data
 
     batch_match = torch.arange(texts.shape[0]).long()[labels == 1]
+    n = batch_match.shape[0] if batch_match.shape else 0
+    if not n:
+        return [0 for _ in ranks], 0
+
     texts = texts.index_select(0, batch_match)
     images = images.index_select(0, batch_match)
     similarity = torch.mm(texts, images.transpose(1, 0))
     sort_val, sort_key = torch.sort(similarity, dim=1, descending=True)
-    n = texts.shape[0]
     labels = torch.arange(n).long().expand(n, n).transpose(1, 0)
     matched = labels == sort_key
 
     accuracy = [matched[:, :rank].sum() / n * 100 for rank in ranks]
-    return accuracy
+    return accuracy, n
 
 
 def train(args, epoch, net, trainLoader, optimizer, trainF, ranks):
@@ -202,7 +211,7 @@ def train(args, epoch, net, trainLoader, optimizer, trainF, ranks):
 
         optimizer.zero_grad()
         output = net((img, caption))
-        rankings = compute_ranking(*output[::-1], labels, ranks)
+        rankings, _ = compute_ranking(*output[::-1], labels, ranks)
         loss = F.cosine_embedding_loss(*output, labels)
 
         #pred = output.data.max(1)[1] # get the index of the max log-probability
@@ -233,6 +242,7 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks):
     test_loss = 0
     incorrect = 0
     rank_values = [0, ] * len(ranks)
+    num_ranks = 0
 
     ts0 = time.perf_counter()
     for batch_idx, (img, caption, labels) in enumerate(valLoader):
@@ -242,9 +252,11 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks):
         img, caption, labels = Variable(img), Variable(caption), Variable(labels)
 
         output = net((img, caption))
-        rankings = compute_ranking(*output[::-1], labels, ranks)
-        for i, value in enumerate(rankings):
-            rank_values[i] += value
+        rankings, rank_count = compute_ranking(*output[::-1], labels, ranks)
+        if rank_count:
+            for i, value in enumerate(rankings):
+                rank_values[i] += value
+            num_ranks += 1
         test_loss += F.cosine_embedding_loss(*output, labels).data[0]
         #pred = output.data.max(1)[1] # get the index of the max log-probability
         #incorrect += pred.ne(target.data).cpu().sum()
@@ -256,7 +268,7 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks):
     s = '\nTest set: Time: {:.2f}s\tAverage loss: {:.4f}\tError: {}/{} ({:.0f}%)'.format(
         time.perf_counter() - ts0, test_loss, incorrect, nTotal, err)
 
-    rankings = [r / len(valLoader) for r in rankings]
+    rankings = [r / num_ranks for r in rank_values]
     s_rank = '\t'.join((['{:.2f}', ] * len(rankings))).format(*rankings)
     print(s + '\tRanks: ' + s_rank + '\n')
 
