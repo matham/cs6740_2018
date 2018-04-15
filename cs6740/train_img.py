@@ -58,6 +58,7 @@ def main():
     parser.add_argument('--textEmbeddingSize', type=int, default=50)
     parser.add_argument('--valSubset', type=str, default='')
     parser.add_argument('--no-cuda', action='store_true')
+    parser.add_argument('--babyCoco', action='store_true')
     parser.add_argument('--dataRoot')
     parser.add_argument('--save')
     parser.add_argument('--preTrainedModel')
@@ -137,11 +138,13 @@ def run(args, optimizer, net, trainTransform, valTransform, testTransform, embed
     if subset:
         with open(subset, 'r') as fh:
             subset = list(map(int, fh.read().split(',')))
+    if args.babyCoco:
+        subset = train_subset = list(range(32))
 
     train_set = CocoDataset(
         root=os.path.join(data_root, 'coco', 'train2017'),
         annFile=os.path.join(data_root, 'coco', 'captions_train2017.json'),
-        transform=trainTransform, target_transform=rand_caption)
+        transform=trainTransform, target_transform=rand_caption, subset=train_subset)
     val_set = CocoDataset(
         root=os.path.join(data_root, 'coco', 'val2017'),
         annFile=os.path.join(data_root, 'coco', 'captions_val2017.json'),
