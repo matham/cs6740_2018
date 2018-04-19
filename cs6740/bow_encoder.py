@@ -9,7 +9,7 @@ class BOWEncoder(nn.Module):
 
         self.hidden_layer = nn.Linear(input_size, output_size)
 
-    def forward(self, in_data):
+    def forward(self, in_data, lengths):
         # Max pool input word vectors
         # Assuming input of shape (batch_size, sentence_length, embedding_size)
         pool = torch.max(in_data, 1)[0]

@@ -41,18 +41,12 @@ class WordEmbeddingUtil(object):
     def get_embeddings(self, caption):
         if isinstance(caption, str):
             tokens = self.tokenizer(caption.lower())
+            true_length = len(tokens)
             indices = [self.word_to_index[w] for w in tokens if w in self.word_to_index]
             indices += [len(self.word_to_index), ] * (self.padding - len(indices))
-        elif isinstance(caption, list):
-            # TODO: Handle different length sentences
-            tokens = [self.tokenizer(c.lower()) for c in caption]
-            indices = [[self.word_to_index[w] for w in cap if w in self.word_to_index] for cap in tokens]
-            for idxs in indices:
-                idxs += [len(self.word_to_index), ] * (self.padding - len(idxs))
-        else:
-            raise ValueError("Expected caption to be string or list")
+
         indices = torch.LongTensor(indices)
-        return indices
+        return indices, true_length
 
     def __call__(self, caption):
         return self.get_embeddings(caption)
