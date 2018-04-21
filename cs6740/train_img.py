@@ -44,11 +44,11 @@ class FinalLayer(nn.Module):
             param.requires_grad = False
 
     def forward(self, x):
-        img, txt = x
+        img, txt, lengths = x
         img = self.img_net(img)
         txt = self.text_embedding(txt)
         if self.txt_net is not None:
-            txt = self.txt_net(txt)
+            txt = self.txt_net(txt, lengths)
         return torch.squeeze(img), torch.squeeze(txt)
 
 
@@ -213,16 +213,16 @@ def train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer
     nTrain = len(trainLoader.dataset)
     ts0 = time.perf_counter()
 
-    for batch_idx, (img, caption, labels) in enumerate(trainLoader):
+    for batch_idx, (img, (caption, lengths), labels) in enumerate(trainLoader):
         ts0_batch = time.perf_counter()
         labels = labels.float()
 
         if args.cuda:
-            img, caption, labels = img.cuda(), caption.cuda(), labels.cuda()
+            img, caption, labels, lengths = img.cuda(), caption.cuda(), labels.cuda(), lengths.cuda()
         img, caption, labels = Variable(img), Variable(caption), Variable(labels)
 
         optimizer.zero_grad()
-        output = net((img, caption))
+        output = net((img, caption, lengths))
         rankings, _ = compute_ranking(*output[::-1], labels, ranks)
         loss = F.cosine_embedding_loss(*output, labels)
 
@@ -253,7 +253,6 @@ def train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer
             tboard_writer.add_scalar('train/Percent Accuracy (top {})'.format(n), rank, partialEpoch*4)
 
 
-
 def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
     net.eval()
     test_loss = 0
@@ -262,13 +261,13 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
     num_ranks = 0
 
     ts0 = time.perf_counter()
-    for batch_idx, (img, caption, labels) in enumerate(valLoader):
+    for batch_idx, (img, (caption, lengths), labels) in enumerate(valLoader):
         labels = labels.float()
         if args.cuda:
-            img, caption, labels = img.cuda(), caption.cuda(), labels.cuda()
+            img, caption, labels, lengths = img.cuda(), caption.cuda(), labels.cuda(), lengths.cuda()
         img, caption, labels = Variable(img), Variable(caption), Variable(labels)
 
-        output = net((img, caption))
+        output = net((img, caption, lengths))
         rankings, rank_count = compute_ranking(*output[::-1], labels, ranks)
         if rank_count:
             for i, value in enumerate(rankings):
