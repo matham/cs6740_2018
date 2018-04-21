@@ -218,7 +218,7 @@ def train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer
         labels = labels.float()
 
         if args.cuda:
-            img, caption, labels = img.cuda(), caption.cuda(), labels.cuda()
+            img, caption, labels, lengths = img.cuda(), caption.cuda(), labels.cuda(), lengths.cuda()
         img, caption, labels = Variable(img), Variable(caption), Variable(labels)
 
         optimizer.zero_grad()
@@ -253,7 +253,6 @@ def train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer
             tboard_writer.add_scalar('train/Percent Accuracy (top {})'.format(n), rank, partialEpoch*4)
 
 
-
 def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
     net.eval()
     test_loss = 0
@@ -265,7 +264,7 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
     for batch_idx, (img, (caption, lengths), labels) in enumerate(valLoader):
         labels = labels.float()
         if args.cuda:
-            img, caption, labels = img.cuda(), caption.cuda(), labels.cuda()
+            img, caption, labels, lengths = img.cuda(), caption.cuda(), labels.cuda(), lengths.cuda()
         img, caption, labels = Variable(img), Variable(caption), Variable(labels)
 
         output = net((img, caption, lengths))

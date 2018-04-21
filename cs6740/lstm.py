@@ -25,13 +25,18 @@ class CocoLSTM(nn.Module):
         # Assuming input of shape (batch_size, sentence_length, embedding_size)
 
         # Packed sequences have to be sorted
-        lengths, idx = lengths.sort(0, descending=True)
-        in_data = in_data[idx]
+        lengths, idx = lengths.sort(descending=True)
+        _, idx_rev = idx.sort(descending=False)
+        in_data = in_data[idx, :, :]
         packed_input = pack_padded_sequence(in_data, lengths.cpu().numpy(), batch_first=True)
 
         _, (final_hidden_states, _) = self.lstm(packed_input)
         # final_hidden_states is (num_layers * num_directions, batch, hidden_size)
-        concatenated_states = torch.cat([final_hidden_states[0], final_hidden_states[1]], dim=1)
+        if self.lstm.bidirectional:
+            concatenated_states = torch.cat([final_hidden_states[0], final_hidden_states[1]], dim=1)
+        else:
+            concatenated_states = final_hidden_states.squeeze()
+        concatenated_states = concatenated_states[idx_rev, :]
 
         # pool = torch.max(lstm_output, 1)[0]
         out_layer = self.final_layer(concatenated_states)
