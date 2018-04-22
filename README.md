@@ -31,3 +31,9 @@ python cs6740/train_img.py --dataRoot data --save result --batchSz 256 --textEmb
 10 - lstm last output, epochs 1-3 lr=1e-3, epoch 4 lr=1e-4
 python cs6740/train_img.py --dataRoot data --save result --batchSz 256 --textEmbeddingSize 300 --valSubset cs6740/data/coco_val_subset.txt --textModel lstm --nEpochs 4
 
+11 - lstm max pooling, epochs 1-3 lr=1e-3, epoch 4 lr=1e-4
+python cs6740/train_img.py --dataRoot data --save result --batchSz 256 --textEmbeddingSize 300 --valSubset cs6740/data/coco_val_subset.txt --textModel lstm --nEpochs 4
+
+12 - lstm packed data, epochs 1-3 lr=1e-1, epocsh 4,5 1e-2, epoch 6 1e-3
+python cs6740/train_img.py --dataRoot data --save result --batchSz 256 --textEmbeddingSize 300 --valSubset cs6740/data/coco_val_subset.txt --textModel lstm --nEpochs 6
+
