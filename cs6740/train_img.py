@@ -172,9 +172,9 @@ def run(args, optimizer, net, trainTransform, valTransform, testTransform, embed
     ts0 = time.perf_counter()
     for epoch in range(1, args.nEpochs + 1):
         if epoch == 2:
-            train_set.proportion_positive = 4 / args.batchSz
+            train_set.proportion_positive = .1
         elif epoch == 3:
-            train_set.proportion_positive = 2 / args.batchSz
+            train_set.proportion_positive = .05
         adjust_opt(args.opt, optimizer, epoch)
         train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer)
         err = val(args, epoch, net, valLoader, optimizer, valF, ranks, tboard_writer)
