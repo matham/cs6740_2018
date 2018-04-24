@@ -261,9 +261,10 @@ def train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer
             ','.join((['{}', ] * len(_rankings))).format(*_rankings)))
         trainF.flush()
 
-        tboard_writer.add_scalar('train/loss', loss.data[0], partialEpoch*4)
+        global_step = epoch*(batch_idx+1)*partialEpoch*len(trainLoader)
+        tboard_writer.add_scalar('train/loss', loss.data[0], global_step)
         for rank, n in zip(rankings, ranks):
-            tboard_writer.add_scalar('train/Percent Accuracy (top {})'.format(n), rank, epoch*(batch_idx+1)*partialEpoch*len(trainLoader))
+            tboard_writer.add_scalar('train/Percent Accuracy (top {})'.format(n), rank, global_step)
 
 
 def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
