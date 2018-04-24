@@ -153,7 +153,8 @@ def run(args, optimizer, net, trainTransform, valTransform, testTransform, embed
     train_set = CocoDatasetConstSize(
         root=os.path.join(data_root, 'coco', 'train2017'),
         annFile=os.path.join(data_root, 'coco', 'captions_train2017.json'),
-        transform=trainTransform, target_transform=rand_caption, subset=train_subset)
+        transform=trainTransform, target_transform=rand_caption, subset=train_subset,
+        proportion_positive=.2)
     val_set = CocoDataset(
         root=os.path.join(data_root, 'coco', 'val2017'),
         annFile=os.path.join(data_root, 'coco', 'captions_val2017.json'),
@@ -171,9 +172,9 @@ def run(args, optimizer, net, trainTransform, valTransform, testTransform, embed
     ts0 = time.perf_counter()
     for epoch in range(1, args.nEpochs + 1):
         if epoch == 2:
-            train_set.proportion_positive = .25
+            train_set.proportion_positive = 4 / args.batchSz
         elif epoch == 3:
-            train_set.proportion_positive = .1
+            train_set.proportion_positive = 2 / args.batchSz
         adjust_opt(args.opt, optimizer, epoch)
         train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer)
         err = val(args, epoch, net, valLoader, optimizer, valF, ranks, tboard_writer)
@@ -206,6 +207,7 @@ def compute_ranking(texts, images, labels, img_indices, ranks=[1]):
     sort_val, sort_key = torch.sort(similarity, dim=1, descending=True)
     labels = torch.arange(n).long().expand(n, n).transpose(1, 0)
     matched = labels == sort_key
+    #torch.unique()
 
     accuracy = [matched[:, :rank].sum() / n * 100 for rank in ranks]
     return accuracy, n
@@ -314,11 +316,11 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
 
 def adjust_opt(optAlg, optimizer, epoch):
     if optAlg == 'sgd':
-        if epoch in (1, 2, 3):
+        if epoch in (1, 2):
             lr = 1e-1
-        elif epoch in (4, 5):
+        elif epoch in (3, 4):
             lr = 1e-2
-        elif epoch in (6, ):
+        elif epoch in (5, 6, ):
             lr = 1e-3
         else:
             return

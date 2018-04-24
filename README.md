@@ -40,3 +40,9 @@ python cs6740/train_img.py --dataRoot data --save result --batchSz 256 --textEmb
 13 - lstm packed data, epochs 1-3 lr=1e-1, epocsh 4,5 1e-2, epoch 6 1e-3, proportion_positive=.5,.25,.1
 python cs6740/train_img.py --dataRoot data --save result --batchSz 256 --textEmbeddingSize 300 --valSubset cs6740/data/coco_val_subset.txt --textModel lstm --nEpochs 6
 
+14 - lstm packed data, epochs 1-3 lr=1e-1, epocsh 4,5 1e-2, epoch 6 1e-3, proportion_positive=.5,.25,.1
+python cs6740/train_img.py --dataRoot data --save result --batchSz 256 --textEmbeddingSize 300 --valSubset cs6740/data/coco_val_subset.txt --textModel lstm --nEpochs 6
+
+15 - lstm packed data, epochs 1-3 lr=1e-1, epocsh 4,5 1e-2, epoch 6 1e-3, proportion_positive=.2,4/batch,2/batch
+python cs6740/train_img.py --dataRoot data --save result --batchSz 256 --textEmbeddingSize 300 --valSubset cs6740/data/coco_val_subset.txt --textModel lstm --nEpochs 6
+
