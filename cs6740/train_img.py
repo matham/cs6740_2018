@@ -192,14 +192,14 @@ def run(args, optimizer, net, trainTransform, valTransform, testTransform, embed
     print('Done in {:.2f}s'.format(time.perf_counter() - ts0))
 
 
-def compute_ranking(texts, images, labels, img_indices, ranks=[1]):
+def compute_ranking(texts, images, labels, img_indices, tboard_writer, ranks=[1]):
     texts, images, labels = texts.cpu().data, images.cpu().data, labels.cpu().data
     # _, unique_indices = np.unique(img_indices.numpy(), return_index=True)
 
     batch_match = torch.arange(texts.shape[0]).long()[labels == 1]
     n = batch_match.shape[0] if batch_match.shape else 0
     if not n:
-        return [0 for _ in ranks], 0
+        return [0 for _ in ranks], 0, None
 
     texts = texts.index_select(0, batch_match)
     images = images.index_select(0, batch_match)
@@ -210,7 +210,7 @@ def compute_ranking(texts, images, labels, img_indices, ranks=[1]):
     #torch.unique()
 
     accuracy = [matched[:, :rank].sum() / n * 100 for rank in ranks]
-    return accuracy, n
+    return accuracy, n, similarity
 
 
 def train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer):
@@ -230,7 +230,7 @@ def train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer
 
         optimizer.zero_grad()
         output = net((img, caption, lengths))
-        rankings, rank_count = compute_ranking(*output[::-1], labels, img_indices, ranks)
+        rankings, rank_count, similarity = compute_ranking(*output[::-1], labels, img_indices, tboard_writer, ranks)
         loss = F.cosine_embedding_loss(*output, labels)
 
         #pred = output.data.max(1)[1] # get the index of the max log-probability
@@ -265,6 +265,8 @@ def train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer
         tboard_writer.add_scalar('train/loss', loss.data[0], global_step)
         for rank, n in zip(rankings, ranks):
             tboard_writer.add_scalar('train/Percent Accuracy (top {})'.format(n), rank, global_step)
+        if similarity is not None:
+            tboard_writer.add_histogram("train/similarity", similarity, global_step, bins="auto")
 
 
 def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
@@ -282,7 +284,7 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
         img, caption, labels = Variable(img), Variable(caption), Variable(labels)
 
         output = net((img, caption, lengths))
-        rankings, rank_count = compute_ranking(*output[::-1], labels, img_indices, ranks)
+        rankings, rank_count, similarity = compute_ranking(*output[::-1], labels, img_indices, tboard_writer, ranks)
         if rank_count:
             for i, value in enumerate(rankings):
                 rank_values[2 * i] += value
@@ -317,12 +319,14 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
 
 def adjust_opt(optAlg, optimizer, epoch):
     if optAlg == 'sgd':
-        if epoch in (1, 2):
+        if epoch in (1, 2, 3, 4, 5, 6, 7):
             lr = 1e-1
-        elif epoch in (3, 4):
+        elif epoch in (8, ):
             lr = 1e-2
-        elif epoch in (5, 6, ):
+        elif epoch in (9, ):
             lr = 1e-3
+        elif epoch in (10, ):
+            lr = 1e-4
         else:
             return
 

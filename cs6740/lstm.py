@@ -12,13 +12,13 @@ class CocoLSTM(nn.Module):
         super(CocoLSTM, self).__init__()
 
         self.lstm = nn.LSTM(input_size=input_size,
-                            hidden_size=512,
+                            hidden_size=712,
                             num_layers=3,
                             dropout=.1,
                             batch_first=True,
                             bidirectional=True)
 
-        self.final_layer = nn.Linear(2 * 512, output_size)
+        self.final_layer = nn.Linear(2 * 712, output_size)
 
     def forward(self, in_data, lengths):
         # Max pool input word vectors
