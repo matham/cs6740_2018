@@ -199,18 +199,24 @@ def compute_ranking(texts, images, labels, img_indices, tboard_writer, ranks=[1]
     batch_match = torch.arange(texts.shape[0]).long()[labels == 1]
     n = batch_match.shape[0] if batch_match.shape else 0
     if not n:
-        return [0 for _ in ranks], 0, None
+        return [0 for _ in ranks], 0, None, 0
 
     texts = texts.index_select(0, batch_match)
     images = images.index_select(0, batch_match)
+    # for each caption, compute its similarity with every positive image
     similarity = torch.mm(texts, images.transpose(1, 0))
+    # sort by similarity so each caption has a list of images from most to
+    # least similar
     sort_val, sort_key = torch.sort(similarity, dim=1, descending=True)
+    # for each caption, get the index of the matching image, replicate it
+    # n times and then set the index in the sort key that is this index to
+    # one and zero otherwise (there should be only one 1)
     labels = torch.arange(n).long().expand(n, n).transpose(1, 0)
     matched = labels == sort_key
-    #torch.unique()
+    mean_rank = torch.mean(torch.arange(n).expand(n, n)[matched])
 
     accuracy = [matched[:, :rank].sum() / n * 100 for rank in ranks]
-    return accuracy, n, similarity
+    return accuracy, n, similarity, mean_rank
 
 
 def train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer):
@@ -230,7 +236,7 @@ def train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer
 
         optimizer.zero_grad()
         output = net((img, caption, lengths))
-        rankings, rank_count, similarity = compute_ranking(*output[::-1], labels, img_indices, tboard_writer, ranks)
+        rankings, rank_count, similarity, mean_rank = compute_ranking(*output[::-1], labels, img_indices, tboard_writer, ranks)
         loss = F.cosine_embedding_loss(*output, labels)
 
         #pred = output.data.max(1)[1] # get the index of the max log-probability
@@ -244,20 +250,23 @@ def train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer
 
         if rank_count:
             expected_ranks = [min(100., r / rank_count * 100) for r in ranks]
+            mean_rank_prop = mean_rank / rank_count * 100
         else:
             expected_ranks = [0, ] * len(ranks)
+            mean_rank_prop = 0
 
         partialEpoch = epoch + batch_idx / len(trainLoader) - 1
         te = time.perf_counter()
         s = 'Train Epoch: {:.2f} [{}/{} ({:.0f}%)]\tTime: [{:.2f}s/{:.2f}s]\tLoss: {:.6f}'.format(
             partialEpoch, nProcessed, nTrain, 100. * batch_idx / len(trainLoader),
             te - ts0_batch, te - ts0, loss.data[0], err)
-        s_rank = '\t'.join((['{:.2f}', ] * len(rankings))).format(*rankings)
+        s_rank = '\t{:.2f}\t'.format(mean_rank)
+        s_rank += '\t'.join((['{:.2f}', ] * len(rankings))).format(*rankings)
         print(s + '\tRanks: ' + s_rank)
 
         _rankings = list(itertools.chain(*zip(rankings, expected_ranks)))
-        trainF.write('{},{},{},{}\n'.format(
-            partialEpoch, loss.data[0], err,
+        trainF.write('{},{},{},{},{},{}\n'.format(
+            partialEpoch, loss.data[0], err, mean_rank, mean_rank_prop,
             ','.join((['{}', ] * len(_rankings))).format(*_rankings)))
         trainF.flush()
 
@@ -265,8 +274,10 @@ def train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer
         tboard_writer.add_scalar('train/loss', loss.data[0], global_step)
         for rank, n in zip(rankings, ranks):
             tboard_writer.add_scalar('train/Percent Accuracy (top {})'.format(n), rank, global_step)
-        if similarity is not None:
-            tboard_writer.add_histogram("train/similarity", similarity, global_step, bins="auto")
+        tboard_writer.add_scalar('train/Mean rank', mean_rank, global_step)
+        tboard_writer.add_scalar('train/Mean rank percent', mean_rank_prop, global_step)
+        # if similarity is not None:
+        #     tboard_writer.add_histogram("train/similarity", similarity, global_step, bins="auto")
 
 
 def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
@@ -275,6 +286,7 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
     incorrect = 0
     rank_values = [0, ] * (2 * len(ranks))
     num_ranks = 0
+    mean_rank_total = 0
 
     ts0 = time.perf_counter()
     for batch_idx, (img, (caption, lengths), labels, img_indices) in enumerate(valLoader):
@@ -284,8 +296,9 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
         img, caption, labels = Variable(img), Variable(caption), Variable(labels)
 
         output = net((img, caption, lengths))
-        rankings, rank_count, similarity = compute_ranking(*output[::-1], labels, img_indices, tboard_writer, ranks)
+        rankings, rank_count, similarity, mean_rank = compute_ranking(*output[::-1], labels, img_indices, tboard_writer, ranks)
         if rank_count:
+            mean_rank_total += mean_rank
             for i, value in enumerate(rankings):
                 rank_values[2 * i] += value
                 rank_values[2 * i + 1] += min(100., ranks[i] / rank_count * 100)
@@ -302,30 +315,32 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
         time.perf_counter() - ts0, test_loss, incorrect, nTotal, err)
 
     rankings = [r / num_ranks for r in rank_values]
-    s_rank = '\t'.join((['{:.2f}', ] * len(rankings))).format(*rankings)
+    s_rank = '\t{:.2f}\t'.format(mean_rank_total / num_ranks)
+    s_rank += '\t'.join((['{:.2f}', ] * len(rankings))).format(*rankings)
     print(s + '\tRanks: ' + s_rank + '\n')
 
-    testF.write('{},{},{},{}\n'.format(
-        epoch, test_loss, err,
+    testF.write('{},{},{},{},{}\n'.format(
+        epoch, test_loss, err, mean_rank_total / num_ranks,
         ','.join((['{}', ] * len(rankings))).format(*rankings)))
     testF.flush()
 
     tboard_writer.add_scalar('val/loss', test_loss, epoch)
     for rank, n in zip(rankings[::2], ranks):
         tboard_writer.add_scalar('val/Percent Accuracy (top {})'.format(n), rank, epoch)
+    tboard_writer.add_scalar('val/Mean rank', mean_rank_total / num_ranks, epoch)
 
     return err
 
 
 def adjust_opt(optAlg, optimizer, epoch):
     if optAlg == 'sgd':
-        if epoch in (1, 2, 3, 4, 5, 6, 7):
+        if epoch in list(range(1, 21)):
             lr = 1e-1
-        elif epoch in (8, ):
+        elif epoch in (22, 23, 24):
             lr = 1e-2
-        elif epoch in (9, ):
+        elif epoch in (25, 26, 27):
             lr = 1e-3
-        elif epoch in (10, ):
+        elif epoch in (28, 29):
             lr = 1e-4
         else:
             return
