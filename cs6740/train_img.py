@@ -199,7 +199,7 @@ def compute_ranking(texts, images, labels, img_indices, tboard_writer, ranks=[1]
     batch_match = torch.arange(texts.shape[0]).long()[labels == 1]
     n = batch_match.shape[0] if batch_match.shape else 0
     if not n:
-        return [0 for _ in ranks], 0, None, 0
+        return [0 for _ in ranks], 0, None, 0, None
 
     texts = texts.index_select(0, batch_match)
     images = images.index_select(0, batch_match)
@@ -213,10 +213,11 @@ def compute_ranking(texts, images, labels, img_indices, tboard_writer, ranks=[1]
     # one and zero otherwise (there should be only one 1)
     labels = torch.arange(n).long().expand(n, n).transpose(1, 0)
     matched = labels == sort_key
-    mean_rank = torch.mean(torch.arange(n).expand(n, n)[matched])
+    rank_vals = torch.arange(n).expand(n, n)[matched]
+    mean_rank = torch.mean(rank_vals)
 
     accuracy = [matched[:, :rank].sum() / n * 100 for rank in ranks]
-    return accuracy, n, similarity, mean_rank
+    return accuracy, n, similarity, mean_rank, rank_vals
 
 
 def train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer):
@@ -236,7 +237,7 @@ def train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer
 
         optimizer.zero_grad()
         output = net((img, caption, lengths))
-        rankings, rank_count, similarity, mean_rank = compute_ranking(*output[::-1], labels, img_indices, tboard_writer, ranks)
+        rankings, rank_count, similarity, mean_rank, rank_vals = compute_ranking(*output[::-1], labels, img_indices, tboard_writer, ranks)
         loss = F.cosine_embedding_loss(*output, labels)
 
         #pred = output.data.max(1)[1] # get the index of the max log-probability
@@ -276,8 +277,8 @@ def train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer
             tboard_writer.add_scalar('train/Percent Accuracy (top {})'.format(n), rank, global_step)
         tboard_writer.add_scalar('train/Mean rank', mean_rank, global_step)
         tboard_writer.add_scalar('train/Mean rank percent', mean_rank_prop, global_step)
-        # if similarity is not None:
-        #     tboard_writer.add_histogram("train/similarity", similarity, global_step, bins="auto")
+        if rank_vals is not None:
+            tboard_writer.add_histogram("train/rank_vals", rank_vals.numpy(), global_step, bins="auto")
 
 
 def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
@@ -287,6 +288,7 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
     rank_values = [0, ] * (2 * len(ranks))
     num_ranks = 0
     mean_rank_total = 0
+    rank_vals_all = []
 
     ts0 = time.perf_counter()
     for batch_idx, (img, (caption, lengths), labels, img_indices) in enumerate(valLoader):
@@ -296,8 +298,9 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
         img, caption, labels = Variable(img), Variable(caption), Variable(labels)
 
         output = net((img, caption, lengths))
-        rankings, rank_count, similarity, mean_rank = compute_ranking(*output[::-1], labels, img_indices, tboard_writer, ranks)
+        rankings, rank_count, similarity, mean_rank, rank_vals = compute_ranking(*output[::-1], labels, img_indices, tboard_writer, ranks)
         if rank_count:
+            rank_vals_all.append(rank_vals)
             mean_rank_total += mean_rank
             for i, value in enumerate(rankings):
                 rank_values[2 * i] += value
@@ -329,18 +332,21 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
         tboard_writer.add_scalar('val/Percent Accuracy (top {})'.format(n), rank, epoch)
     tboard_writer.add_scalar('val/Mean rank', mean_rank_total / num_ranks, epoch)
 
+    if rank_vals_all:
+        tboard_writer.add_histogram("val/rank_vals", torch.cat(rank_vals_all).numpy(), epoch, bins="auto")
+
     return err
 
 
 def adjust_opt(optAlg, optimizer, epoch):
     if optAlg == 'sgd':
-        if epoch in list(range(1, 21)):
+        if epoch in list(range(1, 12)):
             lr = 1e-1
-        elif epoch in (22, 23, 24):
+        elif epoch in list(range(12, 28)):
             lr = 1e-2
-        elif epoch in (25, 26, 27):
+        elif epoch in list(range(28, 38)):
             lr = 1e-3
-        elif epoch in (28, 29):
+        elif epoch in list(range(38, 44)):
             lr = 1e-4
         else:
             return
