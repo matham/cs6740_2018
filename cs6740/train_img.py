@@ -277,8 +277,8 @@ def train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer
             tboard_writer.add_scalar('train/Percent Accuracy (top {})'.format(n), rank, global_step)
         tboard_writer.add_scalar('train/Mean rank', mean_rank, global_step)
         tboard_writer.add_scalar('train/Mean rank percent', mean_rank_prop, global_step)
-        if rank_vals is not None:
-            tboard_writer.add_histogram("train/rank_vals", rank_vals.numpy(), global_step, bins="auto")
+        # if rank_vals is not None:
+        #     tboard_writer.add_histogram("train/rank_vals", rank_vals.numpy(), global_step, bins="auto")
 
 
 def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
@@ -340,13 +340,13 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
 
 def adjust_opt(optAlg, optimizer, epoch):
     if optAlg == 'sgd':
-        if epoch in list(range(1, 12)):
+        if epoch in list(range(1, 7)):
             lr = 1e-1
-        elif epoch in list(range(12, 28)):
+        elif epoch in list(range(7, 12)):
             lr = 1e-2
-        elif epoch in list(range(28, 38)):
+        elif epoch in list(range(12, 15)):
             lr = 1e-3
-        elif epoch in list(range(38, 44)):
+        elif epoch in list(range(15, 17)):
             lr = 1e-4
         else:
             return
