@@ -67,3 +67,6 @@ python cs6740/train_img.py --dataRoot data --save result --batchSz 256 --textEmb
 22 - lstm packed data, epochs 1-11 lr=1e-1, epocsh 12-27 1e-2, epochs 28-37 1e-3, epoch 38-43 1e-4, proportion_positive=.2,.1,.05, lstm stack of 3, 512 units
 python cs6740/train_img.py --dataRoot data --save result --batchSz 256 --textEmbeddingSize 300 --valSubset cs6740/data/coco_val_subset.txt --textModel lstm --nEpochs 43
 
+23 - lstm packed data, epochs 1-6 lr=1e-1, epocsh 7-11 1e-2, epochs 12-14 1e-3, epoch 15-16 1e-4, proportion_positive=.2,.1,.05, lstm stack of 3, 512 units, initial layer before lstm
+python cs6740/train_img.py --dataRoot data --save result --batchSz 256 --textEmbeddingSize 300 --valSubset cs6740/data/coco_val_subset.txt --textModel lstm --nEpochs 16
+
