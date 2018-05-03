@@ -10,11 +10,10 @@ class CocoLSTM(nn.Module):
 
     def __init__(self, input_size, output_size):
         super(CocoLSTM, self).__init__()
-        self.initial_layer = nn.Linear(input_size, input_size)
 
         self.lstm = nn.LSTM(input_size=input_size,
                             hidden_size=512,
-                            num_layers=1,
+                            num_layers=3,
                             dropout=.1,
                             batch_first=True,
                             bidirectional=True)
@@ -22,7 +21,6 @@ class CocoLSTM(nn.Module):
         self.final_layer = nn.Linear(2 * 512, output_size)
 
     def forward(self, in_data, lengths):
-        in_data = self.initial_layer(in_data)
         # Max pool input word vectors
         # Assuming input of shape (batch_size, sentence_length, embedding_size)
 
