@@ -39,11 +39,10 @@ class WordEmbeddingUtil(object):
 
     # Tokenizes a caption and returns a tensor containing its word embeddings
     def get_embeddings(self, caption):
-        if isinstance(caption, str):
-            tokens = self.tokenizer(caption.lower())
-            true_length = len(tokens)
-            indices = [self.word_to_index[w] for w in tokens if w in self.word_to_index]
-            indices += [len(self.word_to_index), ] * (self.padding - len(indices))
+        tokens = self.tokenizer(caption.lower())
+        true_length = len(tokens)
+        indices = [self.word_to_index[w] for w in tokens if w in self.word_to_index]
+        indices += [len(self.word_to_index), ] * (self.padding - len(indices))
 
         indices = torch.LongTensor(indices)
         return indices, true_length

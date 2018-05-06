@@ -142,7 +142,7 @@ def main():
     if args.testOnly:
         run_test(args, net, valTransform, embedding)
     elif args.demo:
-        score_images_on_caption(args, net, valTransform, embedding)
+        score_images_on_caption(args, net, embedding, valTransform)
     else:
         run(args, optimizer, net, trainTransform, valTransform, testTransform, embedding, tboard_writer)
 
@@ -405,29 +405,59 @@ def adjust_opt(optAlg, optimizer, epoch):
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
 
-def score_images_on_caption(args, net, valTransform, embedding):
+def score_images_on_caption(args, net, embedding, valTransform):
     net.eval()
-    img = Image.open(args.image_file)
-    img = valTransform(img)
-
+    # state = net.state_dict()
+    # state.update(torch.load(args.preTrainedModel))
+    # net.load_state_dict(state)
+    # del state
     with open(args.caption_file, 'r') as f:
         caption = f.read()
     caption, length = embedding(caption)
 
-    state = net.state_dict()
-    state.update(torch.load(args.preTrainedModel))
-    net.load_state_dict(state)
-    del state
+    rand_caption = lambda captions: embedding(captions[random.randint(0, len(captions) - 1)])
+    subset = args.valSubset or None
+    kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
+    if subset:
+        with open(subset, 'r') as fh:
+            subset = list(map(int, fh.read().split(',')))
+    if args.babyCoco:
+        subset = list(range(32))
 
-    img = Variable(torch.unsqueeze(img, dim=0))
-    caption = Variable(torch.unsqueeze(caption, dim=0))
-    length = Variable(torch.from_numpy(np.array([length])))
+    val_set = CocoDataset(
+        root=os.path.join(args.dataRoot, 'coco', 'val2017'),
+        annFile=os.path.join(args.dataRoot, 'coco', 'captions_val2017.json'),
+        transform=valTransform, target_transform=rand_caption, subset=subset)
 
-    img_out, txt_out = net((img, caption, length))
+    valLoader = DataLoader(
+        val_set, batch_size=args.batchSz, shuffle=False, **kwargs)
 
-    cos = torch.nn.CosineSimilarity(dim=0)
-    output = cos(img_out, txt_out)
-    print(float(output.data))
+    if args.cuda:
+        caption = caption.cuda()
+
+    caption = Variable(caption)
+    length = torch.from_numpy(np.array([length]))
+    cos = torch.nn.CosineSimilarity(dim=1)
+    result = {}
+
+
+    for batch_idx, (img, (actual_caption, actual_lengths), _, img_indices) in enumerate(valLoader):
+        if args.cuda:
+            img = img.cuda()
+        img = Variable(img)
+        batched_captions = caption.expand(img.shape[0], -1)
+        batched_lengths = torch.squeeze(length.expand(img.shape[0], -1))
+
+        img_out, txt_out = net((img, batched_captions, batched_lengths))
+        print("out shapes", img_out.shape, txt_out.shape)
+        output = cos(img_out, txt_out)
+        print("cosine shape", output.shape)
+        for score, index in zip(output, img_indices):
+            print(score, index)
+            result[index] = float(score.data)
+
+    print(result)
+
 
 
 
