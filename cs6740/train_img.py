@@ -414,10 +414,10 @@ def score_images_on_caption(args, net, valTransform, embedding):
         caption = f.read()
     caption, length = embedding(caption)
 
-    # state = net.state_dict()
-    # state.update(torch.load(args.preTrainedModel))
-    # net.load_state_dict(state)
-    # del state
+    state = net.state_dict()
+    state.update(torch.load(args.preTrainedModel))
+    net.load_state_dict(state)
+    del state
 
     img = Variable(torch.unsqueeze(img, dim=0))
     caption = Variable(torch.unsqueeze(caption, dim=0))
