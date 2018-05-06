@@ -63,9 +63,10 @@ def main():
     parser.add_argument('--valSubset', type=str, default='')
     parser.add_argument('--no-cuda', action='store_true')
     parser.add_argument('--babyCoco', action='store_true')
+    parser.add_argument('--testOnly', action='store_true')
     parser.add_argument('--dataRoot')
     parser.add_argument('--save')
-    parser.add_argument('--preTrainedModel')
+    parser.add_argument('--preTrainedModel', type=str, default='')
     parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--opt', type=str, default='sgd',
                         choices=('sgd', 'adam', 'rmsprop'))
@@ -133,7 +134,46 @@ def main():
     #print(net)
     tboard_writer = SummaryWriter(log_dir=args.save)
 
-    run(args, optimizer, net, trainTransform, valTransform, testTransform, embedding, tboard_writer)
+    if args.testOnly:
+        run_test(args, net, valTransform, embedding)
+    else:
+        run(args, optimizer, net, trainTransform, valTransform, testTransform, embedding, tboard_writer)
+
+
+def run_test(args, net, valTransform, embedding):
+    data_root = args.dataRoot
+    kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
+    ranks = [1, 3, 5, 10, 100000]
+
+    rand_caption = lambda captions: embedding(captions[random.randint(0, len(captions) - 1)])
+    subset = args.valSubset or None
+    if subset:
+        with open(subset, 'r') as fh:
+            subset = list(map(int, fh.read().split(',')))
+    if args.babyCoco:
+        subset = list(range(32))
+
+    val_set = CocoDataset(
+        root=os.path.join(data_root, 'coco', 'val2017'),
+        annFile=os.path.join(data_root, 'coco', 'captions_val2017.json'),
+        transform=valTransform, target_transform=rand_caption, subset=subset)
+
+    valLoader = DataLoader(
+        val_set, batch_size=args.batchSz, shuffle=False, **kwargs)
+
+    valF = open(os.path.join(args.save, 'val_test_only.csv'), 'w')
+
+    ts0 = time.perf_counter()
+
+    state = net.state_dict()
+    state.update(torch.load(args.preTrainedModel))
+    net.load_state_dict(state)
+    del state
+
+    val(args, 0, net, valLoader, None, valF, ranks, None)
+
+    valF.close()
+    print('Done in {:.2f}s'.format(time.perf_counter() - ts0))
 
 
 def run(args, optimizer, net, trainTransform, valTransform, testTransform, embedding, tboard_writer):
@@ -171,10 +211,10 @@ def run(args, optimizer, net, trainTransform, valTransform, testTransform, embed
     best_error = 100
     ts0 = time.perf_counter()
     for epoch in range(1, args.nEpochs + 1):
-        if epoch == 2:
+        if epoch == 3:
             train_set.proportion_positive = .1
-        elif epoch == 3:
-            train_set.proportion_positive = .05
+        # elif epoch == 5:
+        #     train_set.proportion_positive = .05
         adjust_opt(args.opt, optimizer, epoch)
         train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer)
         err = val(args, epoch, net, valLoader, optimizer, valF, ranks, tboard_writer)
@@ -300,7 +340,7 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
         output = net((img, caption, lengths))
         rankings, rank_count, similarity, mean_rank, rank_vals = compute_ranking(*output[::-1], labels, img_indices, tboard_writer, ranks)
         if rank_count:
-            rank_vals_all.append(rank_vals)
+            # rank_vals_all.append(rank_vals)
             mean_rank_total += mean_rank
             for i, value in enumerate(rankings):
                 rank_values[2 * i] += value
@@ -327,26 +367,27 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
         ','.join((['{}', ] * len(rankings))).format(*rankings)))
     testF.flush()
 
-    tboard_writer.add_scalar('val/loss', test_loss, epoch)
-    for rank, n in zip(rankings[::2], ranks):
-        tboard_writer.add_scalar('val/Percent Accuracy (top {})'.format(n), rank, epoch)
-    tboard_writer.add_scalar('val/Mean rank', mean_rank_total / num_ranks, epoch)
+    if tboard_writer is not None:
+        tboard_writer.add_scalar('val/loss', test_loss, epoch)
+        for rank, n in zip(rankings[::2], ranks):
+            tboard_writer.add_scalar('val/Percent Accuracy (top {})'.format(n), rank, epoch)
+        tboard_writer.add_scalar('val/Mean rank', mean_rank_total / num_ranks, epoch)
 
-    if rank_vals_all:
-        tboard_writer.add_histogram("val/rank_vals", torch.cat(rank_vals_all).numpy(), epoch, bins="auto")
+        # if rank_vals_all:
+        #    tboard_writer.add_histogram("val/rank_vals", torch.cat(rank_vals_all).numpy(), epoch, bins="auto")
 
     return err
 
 
 def adjust_opt(optAlg, optimizer, epoch):
     if optAlg == 'sgd':
-        if epoch in list(range(1, 22)):
+        if epoch in list(range(1, 12)):
             lr = 1e-1
-        elif epoch in list(range(22, 25)):
+        elif epoch in list(range(12, 28)):
             lr = 1e-2
-        elif epoch in list(range(25, 28)):
+        elif epoch in list(range(28, 38)):
             lr = 1e-3
-        elif epoch in list(range(28, 30)):
+        elif epoch in list(range(38, 44)):
             lr = 1e-4
         else:
             return
