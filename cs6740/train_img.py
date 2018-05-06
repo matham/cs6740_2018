@@ -20,6 +20,8 @@ import random
 import time
 import itertools
 
+from PIL import Image
+
 from cs6740.densenet import DenseNet121
 from cs6740.lstm import CocoLSTM
 from cs6740.bow_encoder import BOWEncoder
@@ -64,6 +66,9 @@ def main():
     parser.add_argument('--no-cuda', action='store_true')
     parser.add_argument('--babyCoco', action='store_true')
     parser.add_argument('--testOnly', action='store_true')
+    parser.add_argument('--demo', action='store_true')
+    parser.add_argument('--image_file', type=str, default='')
+    parser.add_argument('--caption_file', type=str, default='')
     parser.add_argument('--dataRoot')
     parser.add_argument('--save')
     parser.add_argument('--preTrainedModel', type=str, default='')
@@ -136,6 +141,8 @@ def main():
 
     if args.testOnly:
         run_test(args, net, valTransform, embedding)
+    elif args.demo:
+        score_images_on_caption(args, net, valTransform, embedding)
     else:
         run(args, optimizer, net, trainTransform, valTransform, testTransform, embedding, tboard_writer)
 
@@ -397,6 +404,31 @@ def adjust_opt(optAlg, optimizer, epoch):
 
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
+
+def score_images_on_caption(args, net, valTransform, embedding):
+    net.eval()
+    img = Image.open(args.image_file)
+    img = valTransform(img)
+
+    with open(args.caption_file, 'r') as f:
+        caption = f.read()
+    caption, length = embedding(caption)
+
+    state = net.state_dict()
+    state.update(torch.load(args.preTrainedModel))
+    net.load_state_dict(state)
+    del state
+
+    img = Variable(torch.unsqueeze(img, dim=0))
+    caption = Variable(torch.unsqueeze(caption, dim=0))
+    length = Variable(torch.from_numpy(np.array([length])))
+
+    img_out, txt_out = net((img, caption, length))
+
+    cos = torch.nn.CosineSimilarity(dim=0)
+    output = cos(img_out, txt_out)
+    print(float(output.data))
+
 
 
 if __name__=='__main__':
