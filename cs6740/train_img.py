@@ -172,12 +172,15 @@ def run_test(args, net, valTransform, embedding):
 
     ts0 = time.perf_counter()
 
-    state = net.state_dict()
-    state.update(torch.load(args.preTrainedModel))
-    net.load_state_dict(state)
-    del state
+    if args.preTrainedModel:
+        state = net.state_dict()
+        state.update(torch.load(args.preTrainedModel))
+        net.load_state_dict(state)
+        del state
 
-    val(args, 0, net, valLoader, None, valF, ranks, None)
+    err, rank_vals_all = val(args, 0, net, valLoader, None, valF, ranks, None)
+    rank_vals_all = torch.cat(rank_vals_all).numpy()
+    np.savetxt(os.path.join(args.save, 'val_ranks.csv'), rank_vals_all, delimiter=',')
 
     valF.close()
     print('Done in {:.2f}s'.format(time.perf_counter() - ts0))
@@ -224,7 +227,7 @@ def run(args, optimizer, net, trainTransform, valTransform, testTransform, embed
         #     train_set.proportion_positive = .05
         adjust_opt(args.opt, optimizer, epoch)
         train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer)
-        err = val(args, epoch, net, valLoader, optimizer, valF, ranks, tboard_writer)
+        err, _ = val(args, epoch, net, valLoader, optimizer, valF, ranks, tboard_writer)
 
         torch.save(optimizer.state_dict(), os.path.join(args.save, 'optimizer_last_epoch.t7'))
         torch.save(net.state_dict(), os.path.join(args.save, 'model_last_epoch.t7'))
@@ -347,7 +350,7 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
         output = net((img, caption, lengths))
         rankings, rank_count, similarity, mean_rank, rank_vals = compute_ranking(*output[::-1], labels, img_indices, tboard_writer, ranks)
         if rank_count:
-            # rank_vals_all.append(rank_vals)
+            rank_vals_all.append(rank_vals)
             mean_rank_total += mean_rank
             for i, value in enumerate(rankings):
                 rank_values[2 * i] += value
@@ -383,7 +386,7 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
         # if rank_vals_all:
         #    tboard_writer.add_histogram("val/rank_vals", torch.cat(rank_vals_all).numpy(), epoch, bins="auto")
 
-    return err
+    return err, rank_vals_all
 
 
 def adjust_opt(optAlg, optimizer, epoch):
