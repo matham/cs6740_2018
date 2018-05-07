@@ -22,6 +22,7 @@ import itertools
 
 from PIL import Image
 import torchvision.datasets as dset
+import matplotlib.pyplot as plt
 
 from cs6740.densenet import DenseNet121
 from cs6740.lstm import CocoLSTM
@@ -459,11 +460,16 @@ def score_images_on_caption(args, net, embedding, valTransform):
                 print(score, index)
                 result[index] = float(score.data)
 
-        
-        for i, score in sorted(result.items(), key=lambda x: x[1], reverse=True)[:5]:
+
+        fig=plt.figure(figsize=(8, 8))
+        for index, (i, score) in enumerate(sorted(result.items(), key=lambda x: x[1], reverse=True)[:5]):
             img, _ = coco[i]
-            img.save(str(i)+".jpg")
+            fig.add_subplot(2, 5, index+1)
+            plt.imshow(img)
+            plt.xlabel(str(score))
             print(i, score)
+        plt.show()
+        input()
 
 
 
