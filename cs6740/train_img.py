@@ -21,6 +21,7 @@ import time
 import itertools
 
 from PIL import Image
+import torchvision.datasets as dset
 
 from cs6740.densenet import DenseNet121
 from cs6740.lstm import CocoLSTM
@@ -67,8 +68,6 @@ def main():
     parser.add_argument('--babyCoco', action='store_true')
     parser.add_argument('--testOnly', action='store_true')
     parser.add_argument('--demo', action='store_true')
-    parser.add_argument('--image_file', type=str, default='')
-    parser.add_argument('--caption_file', type=str, default='')
     parser.add_argument('--dataRoot')
     parser.add_argument('--save')
     parser.add_argument('--preTrainedModel', type=str, default='')
@@ -407,13 +406,11 @@ def adjust_opt(optAlg, optimizer, epoch):
 
 def score_images_on_caption(args, net, embedding, valTransform):
     net.eval()
-    # state = net.state_dict()
-    # state.update(torch.load(args.preTrainedModel))
-    # net.load_state_dict(state)
-    # del state
-    with open(args.caption_file, 'r') as f:
-        caption = f.read()
-    caption, length = embedding(caption)
+    if not args.babyCoco:
+        state = net.state_dict()
+        state.update(torch.load(args.preTrainedModel))
+        net.load_state_dict(state)
+        del state
 
     rand_caption = lambda captions: embedding(captions[random.randint(0, len(captions) - 1)])
     subset = args.valSubset or None
@@ -432,31 +429,41 @@ def score_images_on_caption(args, net, embedding, valTransform):
     valLoader = DataLoader(
         val_set, batch_size=args.batchSz, shuffle=False, **kwargs)
 
-    if args.cuda:
-        caption = caption.cuda()
-
-    caption = Variable(caption)
-    length = torch.from_numpy(np.array([length]))
     cos = torch.nn.CosineSimilarity(dim=1)
-    result = {}
 
+    coco = dset.CocoCaptions(root=os.path.join(args.dataRoot, 'coco', 'val2017'),
+                             annFile=os.path.join(args.dataRoot, 'coco', 'captions_val2017.json'))
 
-    for batch_idx, (img, (actual_caption, actual_lengths), _, img_indices) in enumerate(valLoader):
+    while True:
+        caption = input("Caption: ").strip()
+        caption, length = embedding(caption)
         if args.cuda:
-            img = img.cuda()
-        img = Variable(img)
-        batched_captions = caption.expand(img.shape[0], -1)
-        batched_lengths = torch.squeeze(length.expand(img.shape[0], -1))
+            caption = caption.cuda()
+        caption = Variable(caption)
+        length = torch.from_numpy(np.array([length]))
+        result = {}
 
-        img_out, txt_out = net((img, batched_captions, batched_lengths))
-        print("out shapes", img_out.shape, txt_out.shape)
-        output = cos(img_out, txt_out)
-        print("cosine shape", output.shape)
-        for score, index in zip(output, img_indices):
-            print(score, index)
-            result[index] = float(score.data)
 
-    print(result)
+        for batch_idx, (img, (_, _), _, img_indices) in enumerate(valLoader):
+            if args.cuda:
+                img = img.cuda()
+            img = Variable(img)
+            batched_captions = caption.expand(img.shape[0], -1)
+            batched_lengths = torch.squeeze(length.expand(img.shape[0], -1))
+
+            img_out, txt_out = net((img, batched_captions, batched_lengths))
+            print("out shapes", img_out.shape, txt_out.shape)
+            output = cos(img_out, txt_out)
+            print("cosine shape", output.shape)
+            for score, index in zip(output, img_indices):
+                print(score, index)
+                result[index] = float(score.data)
+
+        
+        for i, score in sorted(result.items(), key=lambda x: x[1], reverse=True)[:5]:
+            img, _ = coco[i]
+            img.save(str(i)+".jpg")
+            print(i, score)
 
 
 
