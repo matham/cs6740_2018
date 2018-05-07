@@ -35,6 +35,7 @@ import sys
 import math
 
 import shutil
+from tqdm import tqdm
 
 
 class FinalLayer(nn.Module):
@@ -409,7 +410,10 @@ def score_images_on_caption(args, net, embedding, valTransform):
     net.eval()
     if not args.babyCoco:
         state = net.state_dict()
-        state.update(torch.load(args.preTrainedModel))
+        if args.cuda:
+            state.update(torch.load(args.preTrainedModel))
+        else:
+            state.update(torch.load(args.preTrainedModel, map_location=lambda storage, location: storage))
         net.load_state_dict(state)
         del state
 
@@ -418,7 +422,7 @@ def score_images_on_caption(args, net, embedding, valTransform):
     kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
     if subset:
         with open(subset, 'r') as fh:
-            subset = list(map(int, fh.read().split(',')))
+            subset = list(map(int, fh.read().strip().split(',')))
     if args.babyCoco:
         subset = list(range(32))
 
@@ -445,7 +449,7 @@ def score_images_on_caption(args, net, embedding, valTransform):
         result = {}
 
 
-        for batch_idx, (img, (_, _), _, img_indices) in enumerate(valLoader):
+        for _, (img, (_, _), _, img_indices) in tqdm(enumerate(valLoader), total=len(valLoader)):
             if args.cuda:
                 img = img.cuda()
             img = Variable(img)
@@ -453,15 +457,12 @@ def score_images_on_caption(args, net, embedding, valTransform):
             batched_lengths = torch.squeeze(length.expand(img.shape[0], -1))
 
             img_out, txt_out = net((img, batched_captions, batched_lengths))
-            print("out shapes", img_out.shape, txt_out.shape)
             output = cos(img_out, txt_out)
-            print("cosine shape", output.shape)
             for score, index in zip(output, img_indices):
-                print(score, index)
                 result[index] = float(score.data)
 
 
-        fig=plt.figure(figsize=(8, 8))
+        fig = plt.figure(figsize=(8, 8))
         for index, (i, score) in enumerate(sorted(result.items(), key=lambda x: x[1], reverse=True)[:5]):
             img, _ = coco[i]
             fig.add_subplot(2, 5, index+1)
