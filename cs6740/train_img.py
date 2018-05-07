@@ -390,13 +390,13 @@ def val(args, epoch, net, valLoader, optimizer, testF, ranks, tboard_writer):
 
 def adjust_opt(optAlg, optimizer, epoch):
     if optAlg == 'sgd':
-        if epoch in list(range(1, 12)):
+        if epoch in list(range(1, 9)):
             lr = 1e-1
-        elif epoch in list(range(12, 28)):
+        elif epoch in list(range(9, 17)):
             lr = 1e-2
-        elif epoch in list(range(28, 38)):
+        elif epoch in list(range(17, 21)):
             lr = 1e-3
-        elif epoch in list(range(38, 44)):
+        elif epoch in list(range(21, 25)):
             lr = 1e-4
         else:
             return
