@@ -470,10 +470,10 @@ def score_images_on_caption(args, net, embedding, valTransform):
     while True:
         caption = input("Caption: ").strip()
         caption, length = embedding(caption)
-        if args.cuda:
-            caption = caption.cuda()
-        caption = Variable(caption.unsqueeze(0))
         length = torch.from_numpy(np.array([length]))
+        if args.cuda:
+            caption, length = caption.cuda(), length.cuda()
+        caption = Variable(caption.unsqueeze(0))
 
         txt_out = net.text_embedding(caption)
         if net.txt_net is not None:
@@ -484,9 +484,10 @@ def score_images_on_caption(args, net, embedding, valTransform):
             if args.cuda:
                 img = img.cuda()
             img = Variable(img)
-            img_out = torch.squeeze(net.img_net(img)).transpose(1, 0)
+            img_out = torch.squeeze(net.img_net(img))
+            txt_out_batch = txt_out.squeeze().expand(img_out.shape[0], -1)
 
-            output = torch.mm(txt_out, img_out).squeeze().cpu().data.numpy()
+            output = cos(txt_out_batch, img_out).squeeze().cpu().data.numpy()
             for score, index in zip(output, img_indices):
                 result[index] = float(score)
 
