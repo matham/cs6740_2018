@@ -17,6 +17,8 @@ from torch.utils.data import DataLoader
 import argparse
 import numpy as np
 import random
+import re
+from functools import partial
 import time
 import itertools
 
@@ -70,6 +72,7 @@ def main():
     parser.add_argument('--babyCoco', action='store_true')
     parser.add_argument('--testOnly', action='store_true')
     parser.add_argument('--demo', action='store_true')
+    parser.add_argument('--patchModelDots', action='store_true')
     parser.add_argument('--dataRoot')
     parser.add_argument('--save')
     parser.add_argument('--preTrainedModel', type=str, default='')
@@ -175,9 +178,18 @@ def run_test(args, net, valTransform, embedding):
 
     if args.preTrainedModel:
         state = net.state_dict()
-        state.update(torch.load(args.preTrainedModel))
+        if args.cuda:
+            pre_model = torch.load(args.preTrainedModel)
+        else:
+            pre_model = torch.load(args.preTrainedModel, map_location=lambda storage, location: storage)
+
+        if args.patchModelDots:
+            # https://github.com/pytorch/pytorch/issues/6941
+            pat = re.compile('^(.+?)\\.([0-9]+)\\.(.+?)$')
+            pre_model = {re.sub(pat, '\\g<1>\\g<2>.\\g<3>', k): v for k, v in pre_model.items()}
+        state.update(pre_model)
         net.load_state_dict(state)
-        del state
+        del state, pre_model
 
     err, rank_vals_all = val(args, 0, net, valLoader, None, valF, ranks, None)
     rank_vals_all = torch.cat(rank_vals_all).numpy()
@@ -406,73 +418,89 @@ def adjust_opt(optAlg, optimizer, epoch):
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
 
+
+def pick_rand_caption(embedding, captions):
+    return embedding(captions[random.randint(0, len(captions) - 1)])
+
+
+def get_second_item(x):
+    return x[1]
+
+
 def score_images_on_caption(args, net, embedding, valTransform):
     net.eval()
     if not args.babyCoco:
         state = net.state_dict()
         if args.cuda:
-            state.update(torch.load(args.preTrainedModel))
+            pre_model = torch.load(args.preTrainedModel)
         else:
-            state.update(torch.load(args.preTrainedModel, map_location=lambda storage, location: storage))
-        net.load_state_dict(state)
-        del state
+            pre_model = torch.load(args.preTrainedModel, map_location=lambda storage, location: storage)
 
-    rand_caption = lambda captions: embedding(captions[random.randint(0, len(captions) - 1)])
+        if args.patchModelDots:
+            # https://github.com/pytorch/pytorch/issues/6941
+            pat = re.compile('^(.+?)\\.([0-9]+)\\.(.+?)$')
+            pre_model = {re.sub(pat, '\\g<1>\\g<2>.\\g<3>', k): v for k, v in pre_model.items()}
+        state.update(pre_model)
+        net.load_state_dict(state)
+        del state, pre_model
+
     subset = args.valSubset or None
-    kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
+    kwargs = {'num_workers': 0, 'pin_memory': True} if args.cuda else {}
     if subset:
         with open(subset, 'r') as fh:
             subset = list(map(int, fh.read().strip().split(',')))
     if args.babyCoco:
         subset = list(range(32))
 
-    val_set = CocoDataset(
+    val_set = CocoDatasetConstSize(
         root=os.path.join(args.dataRoot, 'coco', 'val2017'),
         annFile=os.path.join(args.dataRoot, 'coco', 'captions_val2017.json'),
-        transform=valTransform, target_transform=rand_caption, subset=subset)
+        transform=valTransform, target_transform=partial(pick_rand_caption, embedding),
+        subset=subset, proportion_positive=2.)
 
     valLoader = DataLoader(
         val_set, batch_size=args.batchSz, shuffle=False, **kwargs)
 
-    cos = torch.nn.CosineSimilarity(dim=1)
+    coco = dset.CocoCaptions(
+        root=os.path.join(args.dataRoot, 'coco', 'val2017'),
+        annFile=os.path.join(args.dataRoot, 'coco', 'captions_val2017.json'))
 
-    coco = dset.CocoCaptions(root=os.path.join(args.dataRoot, 'coco', 'val2017'),
-                             annFile=os.path.join(args.dataRoot, 'coco', 'captions_val2017.json'))
+    cos = torch.nn.CosineSimilarity(dim=1)
 
     while True:
         caption = input("Caption: ").strip()
         caption, length = embedding(caption)
         if args.cuda:
             caption = caption.cuda()
-        caption = Variable(caption)
+        caption = Variable(caption.unsqueeze(0))
         length = torch.from_numpy(np.array([length]))
+
+        txt_out = net.text_embedding(caption)
+        if net.txt_net is not None:
+            txt_out = net.txt_net(txt_out, length)
+
         result = {}
-
-
         for _, (img, (_, _), _, img_indices) in tqdm(enumerate(valLoader), total=len(valLoader)):
             if args.cuda:
                 img = img.cuda()
             img = Variable(img)
-            batched_captions = caption.expand(img.shape[0], -1)
-            batched_lengths = torch.squeeze(length.expand(img.shape[0], -1))
+            img_out = torch.squeeze(net.img_net(img)).transpose(1, 0)
 
-            img_out, txt_out = net((img, batched_captions, batched_lengths))
-            output = cos(img_out, txt_out)
+            output = torch.mm(txt_out, img_out).squeeze().cpu().data.numpy()
             for score, index in zip(output, img_indices):
-                result[index] = float(score.data)
-
+                result[index] = float(score)
 
         fig = plt.figure(figsize=(8, 8))
-        for index, (i, score) in enumerate(sorted(result.items(), key=lambda x: x[1], reverse=True)[:5]):
+        for index, (i, score) in enumerate(sorted(result.items(), key=get_second_item, reverse=True)[:5]):
             img, _ = coco[i]
-            fig.add_subplot(2, 5, index+1)
+            fig.add_subplot(2, 3, index+1)
             plt.imshow(img)
             plt.xlabel(str(score))
             print(i, score)
+        fig.add_subplot(2, 3, 6)
+        plt.hist(result.values())
         plt.show()
         input()
-
-
 
 
 if __name__=='__main__':

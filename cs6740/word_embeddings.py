@@ -3,6 +3,7 @@ import torch
 from torch.autograd import Variable
 
 import numpy as np
+import platform
 import spacy
 
 from torchvision.datasets import CocoCaptions as Coco
@@ -16,16 +17,20 @@ class WordEmbeddingUtil(object):
                 npzfile = np.load(embed_file)
                 pretrained_weights, vocab = [npzfile[f] for f in npzfile.files]
             self.word_to_index = {w: i for i, w in enumerate(vocab)}
-        except OSError:
+        except (OSError, FileNotFoundError):
             vocab = []
-            with open(embedding_file, 'r') as embed_file:
+            with open(embedding_file, 'rb') as embed_file:
                 for line in embed_file:
                     embed = line.split()
                     vocab.append(embed[0])
                     self.embedding_dimension = len(embed) - 1
 
             self.word_to_index = {w: i for i, w in enumerate(vocab)}
-            pretrained_weights = np.loadtxt(embedding_file, usecols=range(1, self.embedding_dimension+1), delimiter=' ', comments=None)
+            if platform.system() == 'Windows':
+                with open(embedding_file, encoding='utf8') as f:
+                    pretrained_weights = np.loadtxt(f, usecols=range(1, self.embedding_dimension+1), delimiter=' ', comments=None)
+            else:
+                pretrained_weights = np.loadtxt(embedding_file, usecols=range(1, self.embedding_dimension+1), delimiter=' ', comments=None)
             pretrained_weights = np.append(pretrained_weights, np.zeros([1, self.embedding_dimension]), axis=0)
             np.savez(embedding_file[:-3] + 'npz', pretrained_weights, vocab)
 
