@@ -71,7 +71,7 @@ def main():
     parser.add_argument('--no-cuda', action='store_true')
     parser.add_argument('--babyCoco', action='store_true')
     parser.add_argument('--testOnly', action='store_true')
-    parser.add_argument('--demo', action='store_true')
+    parser.add_argument('--demo', type=str, default='')
     parser.add_argument('--patchModelDots', action='store_true')
     parser.add_argument('--genomeLong', action='store_true')
     parser.add_argument('--dataRoot')
@@ -536,6 +536,12 @@ def score_images_on_caption(args, net, embedding, valTransform):
 
     cos = torch.nn.CosineSimilarity(dim=1)
 
+    img_weights = img_indices = None
+    if os.path.exists(args.demo):
+        npzfile = np.load(args.demo)
+        img_weights, img_indices = [npzfile[f] for f in npzfile.files]
+        img_weights, img_indices = torch.from_numpy(img_weights), torch.from_numpy(img_indices)
+
     while True:
         caption = input("Caption: ").strip()
         caption, length = embedding(caption)
@@ -548,27 +554,37 @@ def score_images_on_caption(args, net, embedding, valTransform):
         if net.txt_net is not None:
             txt_out = net.txt_net(txt_out, length)
 
-        result = {}
-        for _, (img, (_, _), _, img_indices) in tqdm(enumerate(valLoader), total=len(valLoader)):
-            if args.cuda:
-                img = img.cuda()
-            img = Variable(img)
-            img_out = torch.squeeze(net.img_net(img))
-            txt_out_batch = txt_out.squeeze().expand(img_out.shape[0], -1)
+        if img_weights is None:
+            img_weights = []
+            img_indices = []
+            for _, (img, (_, _), _, img_indices_orig) in tqdm(enumerate(valLoader), total=len(valLoader)):
+                if args.cuda:
+                    img = img.cuda()
+                img = Variable(img)
+                img_out = torch.squeeze(net.img_net(img)).cpu().data.numpy()
+                for i, j in enumerate(img_indices_orig):
+                    img_weights.append(img_out[i, :])
+                    img_indices.append(j)
+            img_weights = np.array(img_weights)
+            img_indices = np.array(img_indices)
+            np.savez(args.demo, img_weights, img_indices)
+            img_weights, img_indices = torch.from_numpy(img_weights), torch.from_numpy(img_indices)
 
-            output = cos(txt_out_batch, img_out).squeeze().cpu().data.numpy()
-            for score, index in zip(output, img_indices):
-                result[index] = float(score)
+        txt_out_batch = txt_out.squeeze().cpu().data.expand(img_weights.shape[0], -1)
+
+        output = cos(txt_out_batch, img_weights).squeeze().numpy()
 
         fig = plt.figure(figsize=(8, 8))
-        for index, (i, score) in enumerate(sorted(result.items(), key=get_second_item, reverse=True)[:5]):
-            img, _ = coco[i]
+        sort_indices = np.argsort(-output)
+        for index, i, in enumerate(sort_indices[:5]):
+            score = output[i]
+            img, _ = coco[img_indices[i]]
             fig.add_subplot(2, 3, index+1)
             plt.imshow(img)
             plt.xlabel(str(score))
             print(i, score)
         fig.add_subplot(2, 3, 6)
-        plt.hist(result.values())
+        plt.hist(output)
         plt.show()
         input()
 
