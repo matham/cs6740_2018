@@ -1,5 +1,10 @@
 import torchvision.datasets as dset
 import random
+import torch.utils.data as data
+import json
+from PIL import Image
+import os
+import os.path
 
 
 class CocoDataset(dset.CocoCaptions):
@@ -68,3 +73,62 @@ class CocoDatasetConstSize(dset.CocoCaptions):
 
     def __len__(self):
         return len(self.data_mapping)
+
+
+class GenomeLongCaptions(data.Dataset):
+
+    proportion_positive = 0.5
+
+    def __init__(self, captions_file, images_dir, subset_file=None, transform=None, target_transform=None,
+                 proportion_positive=0.5):
+        self.proportion_positive = proportion_positive
+        with open(captions_file, 'r') as fh:
+            items = json.load(fh)
+            if subset_file is not None:
+                with open(subset_file, 'r') as fh_subset:
+                    subset = set(map(str, json.load(fh_subset)))
+                items = {k: v for k, v in items.items() if k in subset}
+
+            self.ids = list(items.items())
+        self.images_dir = images_dir
+        self.transform = transform
+        self.target_transform = target_transform
+        self.original_n = len(self.ids)
+        self.data_mapping = list(range(self.original_n))
+
+    def __getitem__(self, index):
+        """
+        Args:
+            index (int): Index
+
+        Returns:
+            tuple: Tuple (image, caption).
+        """
+        if random.random() < self.proportion_positive:
+            i = self.data_mapping[index]
+            name, caption = self.ids[i]
+            img = Image.open(os.path.join(self.images_dir, name + '.jpg')).convert('RGB')
+            label = 1.
+        else:
+            n = len(self.data_mapping)
+            val = index
+            while val == index:
+                val = random.randint(0, n - 1)
+            i = self.data_mapping[val]
+
+            name, caption = self.ids[i]
+            img = Image.open(os.path.join(self.images_dir, name + '.jpg')).convert('RGB')
+
+            _, caption = self.ids[self.data_mapping[index]]
+            label = -1.
+
+        if self.transform is not None:
+            img = self.transform(img)
+
+        if self.target_transform is not None:
+            caption = self.target_transform(caption)
+
+        return img, caption, label, i
+
+    def __len__(self):
+        return len(self.ids)

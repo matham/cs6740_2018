@@ -29,7 +29,7 @@ import matplotlib.pyplot as plt
 from cs6740.densenet import DenseNet121
 from cs6740.lstm import CocoLSTM
 from cs6740.bow_encoder import BOWEncoder
-from cs6740.data_loaders import CocoDataset, CocoDatasetConstSize
+from cs6740.data_loaders import CocoDataset, CocoDatasetConstSize, GenomeLongCaptions
 from cs6740.word_embeddings import WordEmbeddingUtil
 
 import os
@@ -73,6 +73,7 @@ def main():
     parser.add_argument('--testOnly', action='store_true')
     parser.add_argument('--demo', action='store_true')
     parser.add_argument('--patchModelDots', action='store_true')
+    parser.add_argument('--genomeLong', action='store_true')
     parser.add_argument('--dataRoot')
     parser.add_argument('--save')
     parser.add_argument('--preTrainedModel', type=str, default='')
@@ -103,7 +104,8 @@ def main():
         embedding = WordEmbeddingUtil(
             embedding_file=os.path.join(
                 args.dataRoot, 'glove.6B',
-                'glove.6B.{}d.txt'.format(args.textEmbeddingSize)))
+                'glove.6B.{}d.txt'.format(args.textEmbeddingSize)),
+            padding=402 if args.genomeLong else 102)
 
     if args.textModel == 'bow':
         txt_net = BOWEncoder(1, args.textEmbeddingSize, 1000)
@@ -147,6 +149,8 @@ def main():
         run_test(args, net, valTransform, embedding)
     elif args.demo:
         score_images_on_caption(args, net, embedding, valTransform)
+    elif args.genomeLong:
+        run_genome(args, optimizer, net, trainTransform, valTransform, testTransform, embedding, tboard_writer)
     else:
         run(args, optimizer, net, trainTransform, valTransform, testTransform, embedding, tboard_writer)
 
@@ -195,6 +199,71 @@ def run_test(args, net, valTransform, embedding):
     rank_vals_all = torch.cat(rank_vals_all).numpy()
     np.savetxt(os.path.join(args.save, 'val_ranks.csv'), rank_vals_all, delimiter=',')
 
+    valF.close()
+    print('Done in {:.2f}s'.format(time.perf_counter() - ts0))
+
+
+def run_genome(args, optimizer, net, trainTransform, valTransform, testTransform, embedding, tboard_writer):
+    data_root = args.dataRoot
+    kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
+    ranks = [1, 3, 5, 10, 100000]
+
+    state = net.state_dict()
+    if args.cuda:
+        pre_model = torch.load(args.preTrainedModel)
+    else:
+        pre_model = torch.load(args.preTrainedModel, map_location=lambda storage, location: storage)
+    state.update(pre_model)
+    net.load_state_dict(state)
+    del state, pre_model
+
+    train_set = GenomeLongCaptions(
+        os.path.join(data_root, 'genome', 'captions.json'),
+        os.path.join(data_root, 'genome', 'images'),
+        subset_file=os.path.join(data_root, 'genome', 'train_split.json'),
+        transform=trainTransform, target_transform=embedding, proportion_positive=.2)
+    val_set = GenomeLongCaptions(
+        os.path.join(data_root, 'genome', 'captions.json'),
+        os.path.join(data_root, 'genome', 'images'),
+        subset_file=os.path.join(data_root, 'genome', 'val_split.json'),
+        transform=valTransform, target_transform=embedding, proportion_positive=2)
+
+    trainLoader = DataLoader(
+        train_set, batch_size=args.batchSz, shuffle=True, **kwargs)
+    valLoader = DataLoader(
+        val_set, batch_size=args.batchSz, shuffle=False, **kwargs)
+
+    trainF = open(os.path.join(args.save, 'train.csv'), 'w')
+    valF = open(os.path.join(args.save, 'val.csv'), 'w')
+
+    best_error = 100
+    ts0 = time.perf_counter()
+    for epoch in range(1, args.nEpochs + 1):
+        if epoch == 3:
+            train_set.proportion_positive = .1
+        if epoch in list(range(1, 5)):
+            lr = 1e-2
+        elif epoch in list(range(5, 7)):
+            lr = 1e-3
+        elif epoch in list(range(7, 9)):
+            lr = 1e-4
+        elif epoch in list(range(9, 11)):
+            lr = 1e-4
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
+
+        train(args, epoch, net, trainLoader, optimizer, trainF, ranks, tboard_writer)
+        err, _ = val(args, epoch, net, valLoader, optimizer, valF, ranks, tboard_writer)
+
+        torch.save(optimizer.state_dict(), os.path.join(args.save, 'optimizer_last_epoch.t7'))
+        torch.save(net.state_dict(), os.path.join(args.save, 'model_last_epoch.t7'))
+
+        if err < best_error:
+            best_error = err
+            print('New best error {}'.format(err))
+            torch.save(net.state_dict(), os.path.join(args.save, 'model_best.t7'))
+
+    trainF.close()
     valF.close()
     print('Done in {:.2f}s'.format(time.perf_counter() - ts0))
 
